@@ -1,0 +1,86 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 17% 98%;
+    --foreground: 210 11% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 210 11% 15%;
+    --primary: 145 63% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 17% 97%;
+    --secondary-foreground: 210 11% 15%;
+    --muted: 210 14% 95%;
+    --muted-foreground: 210 7% 46%;
+    --accent: 145 63% 42%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 210 14% 92%;
+    --input: 210 14% 92%;
+    --ring: 145 63% 42%;
+    --radius: 0.75rem;
+  }
+
+  /* 1-xato: Tungi rejim CSS o'zgaruvchilari */
+  .dark {
+    --background: 222 18% 10%;
+    --foreground: 210 17% 95%;
+    --card: 222 18% 14%;
+    --card-foreground: 210 17% 95%;
+    --primary: 145 63% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 222 18% 18%;
+    --secondary-foreground: 210 17% 95%;
+    --muted: 222 18% 18%;
+    --muted-foreground: 210 10% 55%;
+    --accent: 145 63% 45%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 222 18% 22%;
+    --input: 222 18% 22%;
+    --ring: 145 63% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+    transition: background-color 0.2s, color 0.2s;
+  }
+}
+
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ── Dark mode ──────────────────────────────────────────────────── */
+.dark {
+  --background: 222 47% 8%;
+  --foreground: 210 17% 95%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 17% 95%;
+  --primary: 145 63% 42%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 222 47% 14%;
+  --secondary-foreground: 210 17% 95%;
+  --muted: 222 47% 14%;
+  --muted-foreground: 210 10% 55%;
+  --accent: 145 63% 42%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 62% 50%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 222 30% 18%;
+  --input: 222 30% 18%;
+  --ring: 145 63% 42%;
+}
