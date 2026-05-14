@@ -26,6 +26,7 @@ import ClaimGift from '@/pages/ClaimGift'
 import Login from '@/pages/Login'
 import Welcome from '@/pages/Welcome'
 import AuthCallback from '@/pages/AuthCallback'
+import ClickPaymentReturn from '@/pages/ClickPaymentReturn'
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth()
@@ -39,6 +40,7 @@ function ProtectedRoutes() {
   if (!user) return <Navigate to="/login" replace />
   return (
     <Routes>
+      <Route path="/payment/click-return" element={<ClickPaymentReturn />} />
       <Route element={<AppLayout />}>
         <Route path="/"                  element={<Navigate to="/shop" replace />} />
         <Route path="/shop"              element={<Shop />} />
@@ -70,7 +72,9 @@ function OnboardingGate({ children }) {
   const isWelcome = location.pathname === '/welcome'
   const isAuthCallback = location.pathname === '/auth/callback'
 
-  if (!isClaimGift && !isWelcome && !isAuthCallback && !completed) {
+  const isClickReturn = location.pathname.startsWith('/payment/click-return')
+
+  if (!isClaimGift && !isWelcome && !isAuthCallback && !isClickReturn && !completed) {
     return <Navigate to="/welcome" replace />
   }
   return children

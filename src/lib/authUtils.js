@@ -100,3 +100,20 @@ export function getAuthRateLimitMessage(error) {
   }
   return null
 }
+
+/** Brauzer tarmoq / DNS xatolarini i18n kalitiga map qiladi */
+export function getAuthConnectionErrorMessageKey(error) {
+  const name = error?.name
+  const msg = String(error?.message || '').toLowerCase()
+  if (
+    name === 'TypeError' ||
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('network request failed') ||
+    msg.includes('load failed') ||
+    msg.includes('err_name_not_resolved')
+  ) {
+    return 'authConnectionFailed'
+  }
+  return null
+}

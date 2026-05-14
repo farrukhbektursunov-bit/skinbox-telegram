@@ -13,7 +13,9 @@ import {
   PASSWORD_MIN_LENGTH,
   PASSWORD_MAX_LENGTH,
   PW_MSG_KEYS,
+  getAuthConnectionErrorMessageKey,
 } from '@/lib/authUtils'
+import { getSupabaseEnvIssue } from '@/lib/supabaseEnv'
 
 function GoogleIcon({ className }) {
   return (
@@ -38,38 +40,52 @@ function GoogleIcon({ className }) {
   )
 }
 
-// ── Kirish usulini tanlash ─────────────────────────────────────────
+function GoogleOneTapButton({ onGoogle, googleLoading, label }) {
+  const { t } = useLang()
+  return (
+    <button
+      type="button"
+      disabled={googleLoading}
+      onClick={onGoogle}
+      className="w-full flex items-center justify-center gap-2.5 py-3 px-4 rounded-xl border border-border/80 bg-background hover:bg-muted/40 hover:border-primary/30 transition-all active:scale-[0.99] disabled:opacity-60"
+    >
+      <GoogleIcon className="w-[18px] h-[18px] shrink-0" />
+      <span className="text-sm font-semibold text-foreground">{t('googleMethod')}</span>
+      <span className="text-xs text-muted-foreground font-normal">{label}</span>
+    </button>
+  )
+}
+
+// ── Kirish usulini tanlash (email ustun, Google pastda — kirish va ro'yxat) ──
 function MethodSelect({ onSelect, onGoogle, googleLoading }) {
   const { t } = useLang()
   return (
     <div className="space-y-3">
       <button
         type="button"
-        disabled={googleLoading}
-        onClick={onGoogle}
-        className="w-full flex items-center gap-4 p-4 bg-muted/50 border border-border rounded-2xl hover:border-primary/40 hover:bg-primary/5 transition-all active:scale-[0.98] disabled:opacity-60"
-      >
-        <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center border border-border/60 shadow-sm">
-          <GoogleIcon className="w-5 h-5" />
-        </div>
-        <div className="flex-1 text-left">
-          <p className="text-sm font-semibold text-foreground">{t('googleMethod')}</p>
-          <p className="text-xs text-muted-foreground">{t('googleMethodDesc')}</p>
-        </div>
-      </button>
-
-      <button
         onClick={() => onSelect('email')}
-        className="w-full flex items-center gap-4 p-4 bg-muted/50 border border-border rounded-2xl hover:border-primary/40 hover:bg-primary/5 transition-all active:scale-[0.98]"
+        className="w-full flex items-center gap-4 p-5 rounded-2xl border border-primary/45 bg-primary/8 shadow-sm shadow-primary/10 ring-1 ring-primary/15 hover:bg-primary/12 hover:border-primary/55 transition-all active:scale-[0.98] text-left"
       >
-        <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
-          <Mail className="w-5 h-5 text-blue-600" />
+        <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
+          <Mail className="w-5 h-5 text-primary" />
         </div>
-        <div className="flex-1 text-left">
+        <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground">{t('emailMethod')}</p>
           <p className="text-xs text-muted-foreground">{t('emailMethodDesc')}</p>
         </div>
       </button>
+      <div className="flex items-center gap-3 py-0.5">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+          {t('authOr')}
+        </span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+      <GoogleOneTapButton
+        onGoogle={onGoogle}
+        googleLoading={googleLoading}
+        label={`· ${t('googleOneClick')}`}
+      />
     </div>
   )
 }
@@ -113,7 +129,7 @@ function PasswordStrengthBar({ password }) {
 }
 
 // ── Email forma ────────────────────────────────────────────────────
-function EmailForm({ isSignUp, onBack }) {
+function EmailForm({ isSignUp, onBack, onGoogle, googleLoading }) {
   const { signIn, signUp } = useAuth()
   const { t } = useLang()
   const [email, setEmail]         = useState('')
@@ -152,6 +168,11 @@ function EmailForm({ isSignUp, onBack }) {
         return
       }
     }
+    if (getSupabaseEnvIssue()) {
+      toast.error(t('supabaseEnvInvalid'))
+      return
+    }
+
     setLoading(true)
     try {
       if (isSignUp) {
@@ -171,6 +192,8 @@ function EmailForm({ isSignUp, onBack }) {
         const { error } = await signIn(cleanEmail, password)
         if (error) {
           if (error.message.includes('Ko\'p urinishlar')) throw new Error(error.message)
+          const netKeySignIn = getAuthConnectionErrorMessageKey(error)
+          if (netKeySignIn) throw new Error(t(netKeySignIn))
           if (error.message.includes('Email not confirmed') || error.message.includes('email_not_confirmed')) {
             setShowResendBanner(true)
             throw new Error(t('emailNotConfirmed'))
@@ -181,7 +204,8 @@ function EmailForm({ isSignUp, onBack }) {
         toast.success(t('welcomeBack'))
       }
     } catch (err) {
-      toast.error(err.message || t('error'))
+      const netKey = getAuthConnectionErrorMessageKey(err)
+      toast.error(netKey ? t(netKey) : err.message || t('error'))
     } finally {
       setLoading(false)
     }
@@ -230,6 +254,7 @@ function EmailForm({ isSignUp, onBack }) {
   }, [email, t])
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
       {/* Email tasdiqlanmagan – qayta yuborish */}
       {showResendBanner && !isSignUp && (
@@ -313,6 +338,23 @@ function EmailForm({ isSignUp, onBack }) {
         {loading ? t('loading') : isSignUp ? t('signupBtn') : t('loginBtn')}
       </button>
     </form>
+    {onGoogle && (
+      <>
+        <div className="flex items-center gap-3 my-5">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+            {t('authOr')}
+          </span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+        <GoogleOneTapButton
+          onGoogle={onGoogle}
+          googleLoading={googleLoading}
+          label={`· ${t('googleOneClick')}`}
+        />
+      </>
+    )}
+    </>
   )
 }
 
@@ -320,11 +362,15 @@ function EmailForm({ isSignUp, onBack }) {
 export default function Login() {
   const { user } = useAuth()
   const { t } = useLang()
-  const [method, setMethod]   = useState(null)   // null | 'email'
+  const [method, setMethod]   = useState('email') // null | 'email' — boshida email/parol formasi
   const [isSignUp, setIsSignUp] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
 
   const signInWithGoogle = useCallback(async () => {
+    if (getSupabaseEnvIssue()) {
+      toast.error(t('supabaseEnvInvalid'))
+      return
+    }
     setGoogleLoading(true)
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -338,7 +384,8 @@ export default function Login() {
       })
       if (error) throw error
     } catch (err) {
-      toast.error(err.message || t('googleSignInError'))
+      const netKey = getAuthConnectionErrorMessageKey(err)
+      toast.error(netKey ? t(netKey) : err.message || t('googleSignInError'))
       setGoogleLoading(false)
     }
   }, [t])
@@ -363,7 +410,7 @@ export default function Login() {
           {/* Kirish / Ro'yxat tab */}
           <div className="flex bg-muted rounded-xl p-1 mb-5">
             <button
-              onClick={() => { setIsSignUp(false); setMethod(null) }}
+              onClick={() => { setIsSignUp(false); setMethod('email') }}
               className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${
                 !isSignUp ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
               }`}
@@ -371,7 +418,7 @@ export default function Login() {
               {t('loginTitle')}
             </button>
             <button
-              onClick={() => { setIsSignUp(true); setMethod(null) }}
+              onClick={() => { setIsSignUp(true); setMethod('email') }}
               className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${
                 isSignUp ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
               }`}
@@ -402,7 +449,12 @@ export default function Login() {
               >
                 <ArrowLeft className="w-3.5 h-3.5" /> {t('back')}
               </button>
-              <EmailForm isSignUp={isSignUp} onBack={() => { setMethod(null); setIsSignUp(false) }} />
+              <EmailForm
+                isSignUp={isSignUp}
+                onBack={() => { setMethod(null); setIsSignUp(false) }}
+                onGoogle={signInWithGoogle}
+                googleLoading={googleLoading}
+              />
             </>
           )}
 

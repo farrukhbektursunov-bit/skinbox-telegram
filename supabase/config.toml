@@ -1,0 +1,8 @@
+# Supabase loyiha (CLI bilan ishlatishda project_id ni to'ldiring)
+project_id = "obtrvmsthpnewuidcedl"
+
+[functions.click-prepare]
+verify_jwt = false
+
+[functions.click-complete]
+verify_jwt = false

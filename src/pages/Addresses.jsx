@@ -26,6 +26,8 @@ const ADDRESS_TITLES = [
 ]
 const TITLE_MAP = { home: 'addressHome', work: 'addressWork', other: 'addressOther', Uy: 'addressHome', Ish: 'addressWork', "Boshqa": 'addressOther' }
 const TITLE_TO_KEY = { Uy: 'home', Ish: 'work', Boshqa: 'other', home: 'home', work: 'work', other: 'other' }
+/** DB / eski cheklovlar bilan moslik: jadvalda ko'pincha Uy, Ish, Boshqa saqlanadi */
+const TITLE_KEY_TO_DB = { home: 'Uy', work: 'Ish', other: 'Boshqa' }
 
 function AddressForm({ onClose, onSaved, t, editAddress: initial, lang }) {
   const { user } = useAuth()
@@ -52,24 +54,55 @@ function AddressForm({ onClose, onSaved, t, editAddress: initial, lang }) {
 
   const handleSave = async (e) => {
     e.preventDefault()
+    if (!user?.id) {
+      toast.error(t('error'))
+      return
+    }
     const digits = (f.phone || '').replace(/\D/g, '')
     if (digits.length < 9) {
       toast.error(t('enterFullPhone'))
       return
     }
+    const full_name = f.full_name.trim()
+    const district = f.district.trim()
+    const address = f.address.trim()
+    if (!full_name) {
+      toast.error(t('nameRequired'))
+      return
+    }
+    if (!f.region || !district || !address) {
+      toast.error(t('fillRequiredFields'))
+      return
+    }
     setLoading(true)
     try {
-      const payload = { ...f, phone: formatPhoneForSave(f.phone) }
+      const titleDb = TITLE_KEY_TO_DB[f.title] || f.title
+      const row = {
+        title: titleDb,
+        full_name,
+        phone: formatPhoneForSave(f.phone),
+        region: f.region,
+        district,
+        address,
+        building_number: f.building_number.trim() || null,
+        apartment_number: f.apartment_number.trim() || null,
+        entrance_note: f.entrance_note.trim() || null,
+        delivery_instruction: f.delivery_instruction || 'door',
+      }
       if (initial?.id) {
-        const { error } = await supabase.from('addresses').update(payload).eq('id', initial.id).eq('user_id', user.id)
+        const { error } = await supabase.from('addresses').update(row).eq('id', initial.id).eq('user_id', user.id)
         if (error) throw error
       } else {
-        const { error } = await supabase.from('addresses').insert({ ...payload, user_id: user.id })
+        const { error } = await supabase.from('addresses').insert({ ...row, user_id: user.id })
         if (error) throw error
       }
       toast.success(t('addressSaved'))
       onSaved()
-    } catch { toast.error(t('error')) }
+    } catch (err) {
+      console.error('Address save:', err)
+      const msg = (typeof err?.message === 'string' && err.message) || err?.error_description || t('error')
+      toast.error(msg)
+    }
     finally { setLoading(false) }
   }
 

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import BottomSheet from '@/components/shop/BottomSheet'
 import toast from 'react-hot-toast'
+import { buildClickPayUrl, isClickConfigured } from '@/lib/clickPay'
 
 // ── Sovg'a yaratish modali ─────────────────────────────────────────
 const GIFT_PAYMENT_METHODS = [
@@ -34,9 +35,11 @@ function CreateGiftModal({ product, onClose, onCreated }) {
     setLoading(true)
     setStep('processing')
     try {
-      // Simulate payment processing (real app: call Payme/Click API)
-      await new Promise(r => setTimeout(r, 1500))
-      toast.success(t('giftPaymentSuccess'))
+      if (paymentMethod === 'click' && !isClickConfigured()) {
+        toast.error(t('clickNotConfigured'))
+        setStep('payment')
+        return
+      }
 
       const token = crypto.randomUUID?.()?.replace(/-/g, '') || `${Date.now()}${Math.random().toString(36).slice(2, 12)}`
       const { data, error } = await supabase
@@ -49,12 +52,27 @@ function CreateGiftModal({ product, onClose, onCreated }) {
           price:         product.price,
           quantity,
           message:       message.trim() || null,
-          status:        'pending',
+          status:        paymentMethod === 'click' ? 'awaiting_payment' : 'pending',
           token,
         })
         .select()
         .single()
       if (error) throw error
+
+      if (paymentMethod === 'click') {
+        const returnUrl = `${window.location.origin}/payment/click-return?gift_id=${encodeURIComponent(data.id)}`
+        const payUrl = buildClickPayUrl({
+          amountSoum: total,
+          merchantTransId: `gift:${data.id}`,
+          returnUrl,
+        })
+        window.location.assign(payUrl)
+        return
+      }
+
+      // Payme hali ulanmagan, shuning uchun u eski demo oqimida qoladi.
+      await new Promise(r => setTimeout(r, 1500))
+      toast.success(t('giftPaymentSuccess'))
       toast.success(t('giftLinkCreated'))
       onCreated(data)
     } catch (err) {
@@ -274,6 +292,7 @@ function GiftLinkModal({ gift, onClose }) {
 
 // ── Yuborilgan sovg'alar ro'yxati ──────────────────────────────────
 const GIFT_STATUS = {
+  awaiting_payment: { labelKey: 'giftStatusAwaitingPayment', color: 'text-amber-500', bg: 'bg-amber-50', icon: Clock },
   pending:   { labelKey: 'giftStatusPending',    color: 'text-orange-500', bg: 'bg-orange-50', icon: Clock },
   claimed:   { labelKey: 'giftStatusClaimed',    color: 'text-blue-500',   bg: 'bg-blue-50',   icon: CheckCircle },
   delivered: { labelKey: 'giftStatusDelivered',  color: 'text-green-600',  bg: 'bg-green-50',  icon: CheckCircle },

@@ -5,8 +5,9 @@ import { supabase } from '@/api/supabase'
 import { useAuth } from '@/lib/AuthContext'
 import { useLang } from '@/lib/LangContext'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Package, Clock, Truck, CheckCircle, XCircle, ChevronDown, ChevronUp, ChevronLeft, Star, X, Loader2 } from 'lucide-react'
+import { Package, Clock, Truck, CheckCircle, XCircle, ChevronDown, ChevronUp, ChevronLeft, Star, X, Loader2, CreditCard } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { buildClickPayUrl, isClickConfigured } from '@/lib/clickPay'
 
 function StatusStepper({ status, t }) {
   const steps = ['pending', 'confirmed', 'delivering', 'delivered']
@@ -17,6 +18,13 @@ function StatusStepper({ status, t }) {
     delivered:  { label: t('delivered'),  icon: CheckCircle   },
     cancelled:  { label: t('cancelled'),  icon: XCircle       },
   }
+
+  if (status === 'awaiting_payment') return (
+    <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
+      <Clock className="w-4 h-4 text-amber-600" />
+      <span className="text-xs font-semibold text-amber-700">{t('awaiting_payment')}</span>
+    </div>
+  )
 
   if (status === 'cancelled') return (
     <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl">
@@ -164,6 +172,7 @@ function OrderCard({ order, index, t, user, onReviewSaved }) {
   })
 
   const STATUS_COLORS = {
+    awaiting_payment: { color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200', icon: Clock },
     pending:    { color: 'text-orange-500', bg: 'bg-orange-50',  border: 'border-orange-200', icon: Clock         },
     confirmed:  { color: 'text-blue-500',   bg: 'bg-blue-50',    border: 'border-blue-200',   icon: CheckCircle   },
     delivering: { color: 'text-purple-500', bg: 'bg-purple-50',  border: 'border-purple-200', icon: Truck         },
@@ -194,6 +203,19 @@ function OrderCard({ order, index, t, user, onReviewSaved }) {
           </div>
         </div>
         <StatusStepper status={order.status} t={t} />
+        {order.status === 'awaiting_payment' && isClickConfigured() && (
+          <a
+            href={buildClickPayUrl({
+              amountSoum: Number(order.total),
+              merchantTransId: order.id,
+              returnUrl: `${typeof window !== 'undefined' ? window.location.origin : ''}/payment/click-return?order_id=${encodeURIComponent(order.id)}`,
+            })}
+            className="mt-3 flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-orange-500 text-white text-sm font-semibold"
+          >
+            <CreditCard className="w-4 h-4" />
+            {t('payWithClick')}
+          </a>
+        )}
       </div>
 
       <button onClick={() => setOpen(v => !v)}

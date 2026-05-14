@@ -6,13 +6,34 @@ import { cartItemsQueryKey, fetchCartItems } from '@/lib/cartItemsQuery'
 import { useAuth } from '@/lib/AuthContext'
 import { useLang } from '@/lib/LangContext'
 import { getFirstImage, getDisplayImages, onProductImageError } from '@/lib/productImages'
-import { ShoppingCart, Trash2, Plus, Minus, MapPin, Phone, User, FileText, ChevronLeft, Tag, Check, KeyRound } from 'lucide-react'
+import { ShoppingCart, Trash2, Plus, Minus, MapPin, Phone, User, FileText, ChevronLeft, Tag, Check, KeyRound, Wallet, CreditCard } from 'lucide-react'
 import { motion } from 'framer-motion'
 import BottomSheet from '@/components/shop/BottomSheet'
 import toast from 'react-hot-toast'
 import { filterNameInput, filterPhoneInput, parsePhoneForInput, formatPhoneForSave, PHONE_PREFIX } from '@/lib/authUtils'
+import { buildClickPayUrl, isClickConfigured } from '@/lib/clickPay'
 
 const INPUT = "w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all"
+
+/** PostgREST / Postgres xatosi — barcha matnni bir joyda (pattern va fallback uchun) */
+function orderErrorFullText(err) {
+  if (err == null) return ''
+  const parts = []
+  const push = (v) => {
+    if (v == null) return
+    if (typeof v === 'string' && v.trim()) parts.push(v.trim())
+    else if (typeof v === 'number' && Number.isFinite(v)) parts.push(String(v))
+  }
+  push(err.code)
+  push(err.message)
+  push(err.details)
+  push(err.hint)
+  if (err.cause) {
+    push(err.cause?.message)
+    push(err.cause?.details)
+  }
+  return parts.join('\n')
+}
 
 function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap, onClose, onSuccess }) {
   const { user } = useAuth()
@@ -21,6 +42,7 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
   const [loading, setLoading] = useState(false)
   const [couponCode, setCouponCode] = useState('')
   const [appliedCoupon, setAppliedCoupon] = useState(null)
+  const [payMode, setPayMode] = useState('cod')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const { data: defaultAddress } = useQuery({
@@ -99,7 +121,84 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
     if (form.note) parts.push(form.note)
     return parts.length ? parts.join('. ') : null
   }
+
+  const orderErrorToast = (err) => {
+    const full = orderErrorFullText(err)
+    const msg = full.toLowerCase()
+
+    if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('network request failed')) {
+      toast.error(t('authConnectionFailed'))
+      return
+    }
+    if (msg.includes('schema "net" does not exist') || msg.includes(`schema 'net' does not exist`) || msg.includes('pg_net')) {
+      toast.error(t('orderErrorPgNet'))
+      return
+    }
+    if (msg.includes('app.service_role_key') || (msg.includes('unrecognized configuration parameter') && msg.includes('service_role'))) {
+      toast.error(t('orderErrorBadGuc'))
+      return
+    }
+    if (
+      msg.includes('row-level security') ||
+      msg.includes('violates row-level security') ||
+      msg.includes('rls') ||
+      msg.includes('permission denied') ||
+      msg.includes('new row violates row-level security policy')
+    ) {
+      toast.error(t('orderErrorRLS'))
+      return
+    }
+    if (
+      msg.includes('pgrst116') ||
+      msg.includes('contains 0 rows') ||
+      msg.includes('incorrect number of rows') ||
+      msg.includes('json object requested') ||
+      (msg.includes('0 rows') && msg.includes('single')) ||
+      msg.includes('client_no_row') ||
+      msg.includes('insert returned no rows')
+    ) {
+      toast.error(t('orderErrorNoRowReturned'))
+      return
+    }
+    if (msg.includes('duplicate key') || msg.includes('unique constraint')) {
+      toast.error(t('orderErrorDuplicate'))
+      return
+    }
+    if (msg.includes('violates foreign key') || msg.includes('foreign key constraint')) {
+      toast.error(t('orderErrorProductRemoved'))
+      return
+    }
+    if (msg.includes('omborda') || msg.includes('stock') || msg.includes('yetarli')) {
+      toast.error(t('insufficientStock'))
+      return
+    }
+    if (msg.includes('mahsulot topilmadi') || msg.includes('invalid input syntax for type uuid')) {
+      toast.error(t('orderErrorProductRemoved'))
+      return
+    }
+    if (msg.includes('orders_status_check') || (msg.includes('check constraint') && msg.includes('status'))) {
+      toast.error(t('orderErrorDbStatus'))
+      return
+    }
+    if (msg.includes("noto'g'ri summa") || msg.includes('click:')) {
+      toast.error(t('clickRequiresPositiveTotal'))
+      return
+    }
+
+    const detail = [err?.details, err?.hint, err?.message].find((s) => typeof s === 'string' && s.trim().length > 0)
+    const cleaned = String(detail || full || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 260)
+    if (cleaned.length > 12) toast.error(`${t('error')} · ${cleaned}`)
+    else toast.error(t('error'))
+  }
+
   const handleSubmit = async () => {
+    if (!user?.id) {
+      toast.error(t('orderErrorSession'))
+      return
+    }
     if (!form.full_name || !form.phone || form.phone.length < 9 || !form.address) {
       toast.error(t('fillRequiredFields')); return
     }
@@ -117,27 +216,60 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       }
     }
 
+    if (payMode === 'click' && !isClickConfigured()) {
+      toast.error(t('clickNotConfigured'))
+      return
+    }
+
+    if (payMode === 'click' && total <= 0) {
+      toast.error(t('clickRequiresPositiveTotal'))
+      return
+    }
+
+    if (!Number.isFinite(total)) {
+      toast.error(t('error'))
+      return
+    }
+
     setLoading(true)
     try {
-      const { error } = await supabase.from('orders').insert({
+      const orderStatus = payMode === 'click' ? 'awaiting_payment' : 'pending'
+      const { data: insertedRows, error } = await supabase.from('orders').insert({
         user_id: user.id,
         items: cartItems.map(i => ({
           product_id: i.product_id, product_name: i.product_name,
           image: i.product_image, price: Number(i.price), quantity: Number(i.quantity),
         })),
-        total, status: 'pending',
+        total, status: orderStatus,
         full_name: form.full_name, phone: formatPhoneForSave(form.phone),
         address: buildOrderAddress(), note: buildOrderNote(),
-      })
+      }).select('id')
       if (error) throw error
+      const inserted = Array.isArray(insertedRows) ? insertedRows[0] : null
+      if (!inserted?.id) {
+        const synthetic = {
+          message: 'INSERT returned no rows',
+          details: 'PostgREST select after insert: empty array. Often RLS SELECT on public.orders or insert rolled back.',
+          hint: 'Supabase: policies on orders for INSERT + SELECT (own rows).',
+          code: 'CLIENT_NO_ROW',
+        }
+        throw synthetic
+      }
+
+      if (payMode === 'click') {
+        const returnUrl = `${window.location.origin}/payment/click-return?order_id=${encodeURIComponent(inserted.id)}`
+        const payUrl = buildClickPayUrl({
+          amountSoum: total,
+          merchantTransId: inserted.id,
+          returnUrl,
+        })
+        window.location.assign(payUrl)
+        return
+      }
+
       onSuccess()
     } catch (e) {
-      const msg = e?.message || e?.error?.message || ''
-      if (String(msg).toLowerCase().includes('omborda') || String(msg).includes('stock')) {
-        toast.error(t('insufficientStock'))
-      } else {
-        toast.error(t('error'))
-      }
+      orderErrorToast(e)
     }
     finally { setLoading(false) }
   }
@@ -155,7 +287,7 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
           </div>
           <button onClick={handleSubmit} disabled={loading}
             className="w-full py-3.5 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-60">
-            {loading ? t('sending') : t('confirm')}
+            {loading ? t('sending') : payMode === 'click' ? t('payWithClick') : t('confirm')}
           </button>
         </div>
       }
@@ -204,6 +336,33 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
         <div className="flex justify-between text-base pt-2 border-t border-border">
           <span className="font-bold">{t('total')}</span>
           <span className="font-extrabold text-primary">{total.toLocaleString()} so'm</span>
+        </div>
+      </div>
+      <div className="mb-4 space-y-2">
+        <p className="text-xs font-semibold text-muted-foreground">{t('selectPaymentMethod')}</p>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setPayMode('cod')}
+            className={`flex flex-col items-start gap-1 p-3 rounded-xl border text-left transition-all ${
+              payMode === 'cod' ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'border-border bg-muted/30'
+            }`}
+          >
+            <Wallet className="w-4 h-4 text-foreground" />
+            <span className="text-xs font-bold">{t('paymentCod')}</span>
+            <span className="text-[10px] text-muted-foreground leading-tight">{t('paymentCodDesc')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPayMode('click')}
+            className={`flex flex-col items-start gap-1 p-3 rounded-xl border text-left transition-all ${
+              payMode === 'click' ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'border-border bg-muted/30'
+            }`}
+          >
+            <CreditCard className="w-4 h-4 text-orange-600" />
+            <span className="text-xs font-bold">{t('paymentClick')}</span>
+            <span className="text-[10px] text-muted-foreground leading-tight">{t('paymentClickDesc')}</span>
+          </button>
         </div>
       </div>
       <div className="space-y-4">
@@ -292,7 +451,7 @@ export default function Cart() {
   })
 
   const productIds = cartItems.filter(i => i.product_id).map(i => i.product_id)
-  const { data: products = [] } = useQuery({
+  const { data: products = [], isPending: cartProductsPending, isError: cartProductsError } = useQuery({
     queryKey: ['productsForCart', productIds],
     queryFn: async () => {
       if (productIds.length === 0) return []
@@ -305,6 +464,7 @@ export default function Cart() {
     enabled: productIds.length > 0,
   })
   const productMap = Object.fromEntries(products.map(p => [p.id, p]))
+  const cartPricingReady = productIds.length === 0 || (!cartProductsPending && !cartProductsError)
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, quantity }) => {
@@ -584,8 +744,8 @@ export default function Cart() {
                   {selectedItems.length} {t('itemsUnit')} • {total.toLocaleString()} {t('currency')}
                 </p>
               </div>
-              <button onClick={() => selectedItems.length > 0 && setShowOrder(true)}
-                disabled={selectedItems.length === 0}
+              <button onClick={() => selectedItems.length > 0 && cartPricingReady && setShowOrder(true)}
+                disabled={selectedItems.length === 0 || !cartPricingReady}
                 className="py-3 px-6 bg-primary text-white rounded-xl text-sm font-semibold active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed">
                 {t('orderBtn')}
               </button>

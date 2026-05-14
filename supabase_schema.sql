@@ -219,7 +219,7 @@ create table if not exists public.gifts (
   quantity      integer not null default 1,
   message       text,
   status        text not null default 'pending'
-                check (status in ('pending','claimed','delivered','cancelled')),
+                check (status in ('awaiting_payment','pending','claimed','delivered','cancelled')),
   recipient_name    text,
   recipient_phone   text,
   recipient_address text,
