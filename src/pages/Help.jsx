@@ -41,9 +41,9 @@ export default function Help() {
   const navigate = useNavigate()
 
   const contactItems = [
-    { icon: Phone,         labelKey: 'helpPhone',    value: '+998 71 123 45 67', href: 'tel:+998711234567',           color: 'bg-green-50 text-green-600'  },
-    { icon: MessageCircle, labelKey: 'helpTelegram', value: '@skinbox_uz',         href: 'https://t.me/skinbox_uz',     color: 'bg-blue-50 text-blue-600'    },
-    { icon: Mail,         labelKey: 'helpEmail',    value: 'info@skinbox.uz',    href: 'mailto:info@skinbox.uz',      color: 'bg-orange-50 text-orange-500'},
+    { icon: Phone,         labelKey: 'helpPhone',    value: '+998 88 471 23 20',     href: 'tel:+998884712320',                 color: 'bg-green-50 text-green-600'  },
+    { icon: MessageCircle, labelKey: 'helpTelegram', value: '@rusetta_07',           href: 'https://t.me/rusetta_07',           color: 'bg-blue-50 text-blue-600'    },
+    { icon: Mail,          labelKey: 'helpEmail',    value: 'skinbox.uz@gmail.com',  href: 'mailto:skinbox.uz@gmail.com',       color: 'bg-orange-50 text-orange-500'},
   ]
 
   return (

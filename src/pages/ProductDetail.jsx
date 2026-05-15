@@ -12,6 +12,7 @@ import {
   Package, MessageCircle, X, Check, Users, AlertCircle, Loader2
 } from 'lucide-react'
 import VariantSelector from '@/components/shop/VariantSelector'
+import { formatMissingVariantsMessage } from '@/lib/i18n'
 import { descriptionTranslations, nameTranslations } from '@/data/productTranslations'
 import { getDisplayImages, getDemoImages, onProductImageError } from '@/lib/productImages'
 import toast from 'react-hot-toast'
@@ -37,11 +38,14 @@ function Stars({ rating, size = 'sm', interactive = false, onRate }) {
 }
 
 // ── Baholash modali — faqat buyurtma qilganlar uchun ──────────────
+// Sharh uzunligini cheklab qo'yamiz — spam va katta yozuvlarning oldini olish uchun.
+const REVIEW_COMMENT_MAX = 500
+
 function ReviewModal({ productId, existingReview, onClose, onSaved }) {
   const { user } = useAuth()
   const { t } = useLang()
   const [rating, setRating]   = useState(existingReview?.rating || 5)
-  const [comment, setComment] = useState(existingReview?.comment || '')
+  const [comment, setComment] = useState((existingReview?.comment || '').slice(0, REVIEW_COMMENT_MAX))
   const [loading, setLoading] = useState(false)
 
   const LABELS = { 1: t('rating1'), 2: t('rating2'), 3: t('rating3'), 4: t('rating4'), 5: t('rating5') }
@@ -49,10 +53,11 @@ function ReviewModal({ productId, existingReview, onClose, onSaved }) {
   const handleSave = async () => {
     setLoading(true)
     try {
+      const safeComment = comment.trim().slice(0, REVIEW_COMMENT_MAX) || null
       if (existingReview) {
-        await supabase.from('reviews').update({ rating, comment }).eq('id', existingReview.id)
+        await supabase.from('reviews').update({ rating, comment: safeComment }).eq('id', existingReview.id)
       } else {
-        await supabase.from('reviews').insert({ user_id: user.id, product_id: productId, rating, comment })
+        await supabase.from('reviews').insert({ user_id: user.id, product_id: productId, rating, comment: safeComment })
       }
       toast.success(t('reviewAccepted'))
       onSaved()
@@ -79,10 +84,15 @@ function ReviewModal({ productId, existingReview, onClose, onSaved }) {
         </div>
         <div className="mb-4">
           <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">{t('commentOptional')}</label>
-          <textarea rows={3} value={comment} onChange={e => setComment(e.target.value)}
+          <textarea rows={3} value={comment}
+            onChange={e => setComment(e.target.value.slice(0, REVIEW_COMMENT_MAX))}
+            maxLength={REVIEW_COMMENT_MAX}
             placeholder={t('commentPlaceholder')}
             className="w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all resize-none"
           />
+          <p className="mt-1 text-[10px] text-muted-foreground text-right tabular-nums">
+            {comment.length}/{REVIEW_COMMENT_MAX}
+          </p>
         </div>
         <button onClick={handleSave} disabled={loading}
           className="w-full py-3.5 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-60 flex items-center justify-center gap-2"
@@ -120,7 +130,8 @@ export default function ProductDetail() {
     },
   })
 
-  // Sotuvlar soni (products.sold_count yoki RPC orqali buyurtmalardan)
+  // Sotuvlar soni — buyurtmalardan real-time (confirmed/delivering/delivered).
+  // RPC har doim chaqiriladi; products.sold_count faqat zaxira sifatida.
   const { data: realSoldCount } = useQuery({
     queryKey: ['productSoldCount', id],
     queryFn: async () => {
@@ -128,13 +139,14 @@ export default function ProductDetail() {
       if (error) return null
       return typeof data === 'number' ? data : 0
     },
-    enabled: !!id && (product?.sold_count ?? 0) === 0,
+    enabled: !!id,
     retry: false,
   })
 
-  const displaySoldCount = (product?.sold_count ?? 0) > 0
-    ? (product.sold_count ?? 0)
-    : (realSoldCount ?? product?.sold_count ?? 0)
+  const displaySoldCount = Math.max(
+    Number(realSoldCount ?? 0),
+    Number(product?.sold_count ?? 0),
+  )
 
   // Baholar
   const { data: reviews = [] } = useQuery({
@@ -201,8 +213,10 @@ export default function ProductDetail() {
   const finalPrice       = (product?.price || 0) + variantPriceDiff
   const variantImage     = Object.values(selectedVariants).find(v => v?.image_url)?.image_url
   const variantTypes     = [...new Set(variants.map(v => v.type))]
-  const allSelected      = variantTypes.every(t => selectedVariants[t])
+  const missingTypes     = variantTypes.filter(t => !selectedVariants[t])
+  const allSelected      = missingTypes.length === 0
   const hasVariants      = variants.length > 0
+  const missingVariantsMsg = formatMissingVariantsMessage(missingTypes, lang)
 
   const handleVariantSelect = (type, variant) => {
     setSelectedVariants(prev => ({
@@ -427,7 +441,7 @@ export default function ProductDetail() {
               {!allSelected && (
                 <div className="flex items-center gap-2 mt-3 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
                   <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                  <p className="text-xs text-amber-700">{t('selectVariants')}</p>
+                  <p className="text-xs text-amber-700">{missingVariantsMsg}</p>
                 </div>
               )}
             </div>
@@ -568,7 +582,7 @@ export default function ProductDetail() {
         <div className="flex gap-2">
           <button
             onClick={() => {
-              if (hasVariants && !allSelected) { toast.error(t('selectVariants')); return }
+              if (hasVariants && !allSelected) { toast.error(missingVariantsMsg); return }
               setShowGiftModal(true)
             }}
             className="flex items-center justify-center gap-1.5 px-4 py-3 border border-border rounded-2xl text-sm font-semibold text-foreground active:scale-[0.98] transition-all"
@@ -577,7 +591,7 @@ export default function ProductDetail() {
           </button>
           <button
             onClick={() => {
-              if (hasVariants && !allSelected) { toast.error(t('selectVariants')); return }
+              if (hasVariants && !allSelected) { toast.error(missingVariantsMsg); return }
               addToCartMutation.mutate()
             }}
             disabled={addToCartMutation.isPending}

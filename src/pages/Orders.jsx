@@ -82,11 +82,14 @@ function Stars({ rating, size = 'sm', interactive = false, onRate }) {
 }
 
 // Baholash modali
+// Sharh uzunligini cheklab qo'yamiz — spam va katta yozuvlarning oldini olish uchun.
+const REVIEW_COMMENT_MAX = 500
+
 function ReviewModal({ productId, productName, existingReview, onClose, onSaved }) {
   const { user } = useAuth()
   const { t } = useLang()
   const [rating, setRating] = useState(existingReview?.rating || 5)
-  const [comment, setComment] = useState(existingReview?.comment || '')
+  const [comment, setComment] = useState((existingReview?.comment || '').slice(0, REVIEW_COMMENT_MAX))
   const [loading, setLoading] = useState(false)
 
   const LABELS = { 1: t('rating1'), 2: t('rating2'), 3: t('rating3'), 4: t('rating4'), 5: t('rating5') }
@@ -94,10 +97,11 @@ function ReviewModal({ productId, productName, existingReview, onClose, onSaved 
   const handleSave = async () => {
     setLoading(true)
     try {
+      const safeComment = comment.trim().slice(0, REVIEW_COMMENT_MAX) || null
       if (existingReview) {
-        await supabase.from('reviews').update({ rating, comment }).eq('id', existingReview.id)
+        await supabase.from('reviews').update({ rating, comment: safeComment }).eq('id', existingReview.id)
       } else {
-        await supabase.from('reviews').insert({ user_id: user.id, product_id: productId, rating, comment })
+        await supabase.from('reviews').insert({ user_id: user.id, product_id: productId, rating, comment: safeComment })
       }
       toast.success(t('reviewAccepted'))
       onSaved()
@@ -125,10 +129,15 @@ function ReviewModal({ productId, productName, existingReview, onClose, onSaved 
         </div>
         <div className="mb-4">
           <label className="text-xs font-semibold text-muted-foreground mb-1.5 block">{t('commentOptional')}</label>
-          <textarea rows={3} value={comment} onChange={e => setComment(e.target.value)}
+          <textarea rows={3} value={comment}
+            onChange={e => setComment(e.target.value.slice(0, REVIEW_COMMENT_MAX))}
+            maxLength={REVIEW_COMMENT_MAX}
             placeholder={t('commentPlaceholder')}
             className="w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all resize-none"
           />
+          <p className="mt-1 text-[10px] text-muted-foreground text-right tabular-nums">
+            {comment.length}/{REVIEW_COMMENT_MAX}
+          </p>
         </div>
         <button onClick={handleSave} disabled={loading}
           className="w-full py-3.5 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-60 flex items-center justify-center gap-2"

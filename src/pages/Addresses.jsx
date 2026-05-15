@@ -10,12 +10,7 @@ import BottomSheet from '@/components/shop/BottomSheet'
 import toast from 'react-hot-toast'
 import { REGION_NAMES } from '@/lib/i18n'
 import { filterNameInput, filterPhoneInput, parsePhoneForInput, formatPhoneForSave, PHONE_PREFIX } from '@/lib/authUtils'
-
-const REGIONS = [
-  "Toshkent shahri","Toshkent viloyati","Samarqand","Buxoro",
-  "Farg'ona","Andijon","Namangan","Qashqadaryo","Surxondaryo",
-  "Xorazm","Navoiy","Jizzax","Sirdaryo","Qoraqalpog'iston"
-]
+import { UZ_DELIVERY_REGIONS as REGIONS } from '@/lib/uzRegions'
 
 const INPUT = "w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all"
 
@@ -93,15 +88,25 @@ function AddressForm({ onClose, onSaved, t, editAddress: initial, lang }) {
         const { error } = await supabase.from('addresses').update(row).eq('id', initial.id).eq('user_id', user.id)
         if (error) throw error
       } else {
-        const { error } = await supabase.from('addresses').insert({ ...row, user_id: user.id })
+        // Agar foydalanuvchining hali default manzili bo'lmasa, yangi qo'shilgan manzilni
+        // avtomatik default qilib belgilaymiz. Aks holda buyurtma sahifasida manzil
+        // avtomatik to'ldirilmaydi.
+        const { count: defaultCount } = await supabase
+          .from('addresses')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .eq('is_default', true)
+        const shouldBeDefault = !defaultCount || defaultCount === 0
+        const { error } = await supabase
+          .from('addresses')
+          .insert({ ...row, user_id: user.id, is_default: shouldBeDefault })
         if (error) throw error
       }
       toast.success(t('addressSaved'))
       onSaved()
     } catch (err) {
       console.error('Address save:', err)
-      const msg = (typeof err?.message === 'string' && err.message) || err?.error_description || t('error')
-      toast.error(msg)
+      toast.error(t('error'))
     }
     finally { setLoading(false) }
   }
@@ -214,7 +219,12 @@ export default function Addresses() {
         .eq('user_id', user.id)
       if (error) throw error
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['addresses', user?.id] }); toast.success(t('removed')) },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['addresses', user?.id] })
+      queryClient.invalidateQueries({ queryKey: ['defaultAddress', user?.id] })
+      queryClient.invalidateQueries({ queryKey: ['defaultAddressFull', user?.id] })
+      toast.success(t('removed'))
+    },
     onError: () => toast.error(t('error')),
   })
 
@@ -226,6 +236,8 @@ export default function Addresses() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['addresses', user?.id] })
+      queryClient.invalidateQueries({ queryKey: ['defaultAddress', user?.id] })
+      queryClient.invalidateQueries({ queryKey: ['defaultAddressFull', user?.id] })
       toast.success(t('primarySet'))
     },
     onError: () => toast.error(t('error')),
@@ -325,6 +337,8 @@ export default function Addresses() {
             setShowForm(false)
             setEditingAddress(null)
             queryClient.invalidateQueries({ queryKey: ['addresses', user?.id] })
+            queryClient.invalidateQueries({ queryKey: ['defaultAddress', user?.id] })
+            queryClient.invalidateQueries({ queryKey: ['defaultAddressFull', user?.id] })
           }}
         />
       )}

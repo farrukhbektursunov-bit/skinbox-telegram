@@ -8,19 +8,19 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronLeft, Gift, Copy, Check, Share2,
   Package, Clock, Truck, CheckCircle, X,
-  Plus, ExternalLink
+  Plus, ExternalLink, CreditCard, Smartphone,
+  MessageCircle
 } from 'lucide-react'
 import BottomSheet from '@/components/shop/BottomSheet'
 import toast from 'react-hot-toast'
 import { buildClickPayUrl, isClickConfigured } from '@/lib/clickPay'
 
 // ── Sovg'a yaratish modali ─────────────────────────────────────────
-// Eslatma: Payme hozircha haqiqiy integratsiya emas. To'lov simulyatsiyasini
-// foydalanuvchiga ko'rsatish noto'g'ri — Payme bo'limi vaqtincha o'chirilgan.
-// (Tugagandan keyin shu yerga { id: 'payme', ... } qaytariladi.)
-const GIFT_PAYMENT_METHODS = [
-  { id: 'click', labelKey: 'click', icon: 'C', color: 'bg-orange-500' },
-]
+// Eslatma: Payme provayderi bilan shartnoma hali rasmiylashtirilmagan —
+// foydalanuvchi tanlay oladi, lekin yuborilganda `paymeUnavailable` toast
+// ko'rsatiladi va so'rov yuborilmaydi (`handlePayAndCreate` da tekshiriladi).
+// Cart sahifasidagi to'lov ro'yxati bilan bir xil ko'rinishni saqlash uchun ham
+// ikkala variant ham UI da ko'rsatiladi.
 
 // Kuchli token: SubtleCrypto random bytes → hex. UUID fallback emas, balki
 // crypto.getRandomValues() ishlatadi. Faqat juda eski (HTTPS bo'lmagan) brauzerlarda
@@ -48,16 +48,22 @@ function CreateGiftModal({ product, onClose, onCreated }) {
   const [step, setStep] = useState('details') // 'details' | 'payment' | 'processing'
   const [quantity, setQuantity] = useState(1)
   const [message, setMessage]   = useState('')
+  // Sovg'a yaratish endi faqat online to'lov bilan: Click yoki Payme.
+  // Naqd (COD) varianti olib tashlandi — sovg'ani sender oldindan to'laydi.
   const [paymentMethod, setPaymentMethod] = useState('click')
   const [loading, setLoading]   = useState(false)
 
   const total = (product?.price || 0) * quantity
 
   const handlePayAndCreate = async () => {
-    // Faqat haqiqiy ulangan to'lov usullari qabul qilinadi.
-    // Payme hozircha integratsiya qilinmagan — soxta "muvaffaqiyat" ko'rsatmaymiz.
-    if (paymentMethod !== 'click') {
+    // Payme provayderi bilan shartnoma yo'q — foydalanuvchini ogohlantirib chiqamiz.
+    if (paymentMethod === 'payme') {
       toast.error(t('paymeUnavailable'))
+      return
+    }
+    if (paymentMethod !== 'click') {
+      // Faqat Click qo'llab-quvvatlanadi (Payme tayyor emas, COD olib tashlangan).
+      toast.error(t('selectPaymentMethod'))
       return
     }
     if (!isClickConfigured()) {
@@ -77,18 +83,22 @@ function CreateGiftModal({ product, onClose, onCreated }) {
         return
       }
 
+      // Click oqimi: sovg'a 'awaiting_payment' bilan yoziladi, keyin my.click.uz ga o'tiladi.
+      // To'lov tasdiqlangach, click-complete edge-function uni 'pending' ga o'zgartiradi
+      // va link ulashishga tayyor bo'ladi.
       const { data, error } = await supabase
         .from('gifts')
         .insert({
-          sender_id:     user.id,
-          product_id:    product.id,
-          product_name:  product.name,
-          product_image: product.image_url,
-          price:         product.price,
+          sender_id:      user.id,
+          product_id:     product.id,
+          product_name:   product.name,
+          product_image:  product.image_url,
+          price:          product.price,
           quantity,
-          message:       message.trim() || null,
-          status:        'awaiting_payment',
+          message:        message.trim() || null,
+          status:         'awaiting_payment',
           token,
+          payment_method: 'click',
         })
         .select()
         .single()
@@ -152,15 +162,28 @@ function CreateGiftModal({ product, onClose, onCreated }) {
               </div>
             </div>
             <p className="text-xs font-semibold text-muted-foreground">{t('selectPaymentMethod')}</p>
-            <div className={`grid gap-2 ${GIFT_PAYMENT_METHODS.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-              {GIFT_PAYMENT_METHODS.map(m => (
-                <button key={m.id} type="button" onClick={() => setPaymentMethod(m.id)}
-                  className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-all ${
-                    paymentMethod === m.id ? 'border-primary bg-primary/5' : 'border-border bg-card'
-                  }`}
+            <div className="bg-card rounded-2xl border border-border/60 overflow-hidden divide-y divide-border/40">
+              {[
+                // Sovg'a uchun faqat online to'lov: naqd (COD) bu yerda yo'q.
+                { id: 'click', label: t('paymentClick'), desc: t('paymentClickDesc'), icon: <div className="w-9 h-9 rounded-xl bg-orange-500 flex items-center justify-center"><CreditCard className="w-4 h-4 text-white" /></div> },
+                { id: 'payme', label: t('payme'),        desc: t('paymeDesc'),        icon: <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center"><Smartphone className="w-4 h-4 text-white" /></div> },
+              ].map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setPaymentMethod(m.id)}
+                  className="w-full flex items-center gap-3 px-3 py-3 hover:bg-muted/30 transition-colors text-left"
                 >
-                  <span className={`w-10 h-10 rounded-lg flex items-center justify-center text-white font-black ${m.color}`}>{m.icon}</span>
-                  <span className="text-[10px] font-semibold">{t(m.labelKey)}</span>
+                  {m.icon}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{m.label}</p>
+                    <p className="text-[11px] text-muted-foreground leading-tight truncate">{m.desc}</p>
+                  </div>
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                    paymentMethod === m.id ? 'border-primary bg-primary' : 'border-border'
+                  }`}>
+                    {paymentMethod === m.id && <div className="w-2 h-2 bg-white rounded-full" />}
+                  </div>
                 </button>
               ))}
             </div>
@@ -227,89 +250,207 @@ function CreateGiftModal({ product, onClose, onCreated }) {
 }
 
 // ── Link ko'rsatish modali ─────────────────────────────────────────
+// Telegram brand SVG (paper plane in circle) — lucide brand ikonlarini bermaydi.
+function TelegramIcon({ className = 'w-5 h-5' }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
+      <path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z" />
+    </svg>
+  )
+}
+
+// WhatsApp brand SVG
+function WhatsAppIcon({ className = 'w-5 h-5' }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden="true">
+      <path d="M.057 24l1.687-6.163a11.867 11.867 0 01-1.587-5.946C.16 5.335 5.495 0 12.05 0a11.82 11.82 0 018.413 3.488 11.82 11.82 0 013.48 8.414c-.003 6.557-5.338 11.892-11.893 11.892a11.9 11.9 0 01-5.688-1.448L.057 24zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884a9.86 9.86 0 001.51 5.26l-.999 3.648 3.978-1.607zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z" />
+    </svg>
+  )
+}
+
 function GiftLinkModal({ gift, onClose }) {
   const { t } = useLang()
   const [copied, setCopied] = useState(false)
+  // Token majburiy — agar yo'q bo'lsa, link `undefined` deb yoziladi va qabul qiluvchi
+  // sahifasida "Sovg'a topilmadi" chiqadi. Bunga yo'l qo'ymaymiz: avval ogohlantirib,
+  // modalni yopamiz.
+  if (!gift?.token) {
+    console.error('[GiftLinkModal] gift.token missing:', gift)
+    return null
+  }
   const giftUrl = `${window.location.origin}/claim-gift/${gift.token}`
+  const shareText = `${gift.product_name} ${t('giftShareText')}`
+  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(giftUrl)
-    setCopied(true)
-    toast.success(t('linkCopied'))
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  const handleShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: t('giftForYouTitle'),
-          text: `${gift.product_name} ${t('giftShareText')}`,
-          url: giftUrl,
-        })
-      } catch {}
-    } else {
-      handleCopy()
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(giftUrl)
+      } else {
+        // Fallback uchun: clipboard API ishlamasa, oddiy textarea trigi.
+        const ta = document.createElement('textarea')
+        ta.value = giftUrl
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setCopied(true)
+      toast.success(t('linkCopied'))
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Clipboard write failed:', err)
+      toast.error(t('error'))
     }
   }
+
+  // Native OS share sheet (telefon/planshetda — Telegram, Instagram, kontaktlar va h.k.).
+  // Desktop brauzerlarda odatda mavjud emas, shu uchun pastdagi tezkor tugmalarni qoldiramiz.
+  const handleNativeShare = async () => {
+    if (!canNativeShare) {
+      toast(t('shareNotSupported'))
+      return
+    }
+    try {
+      await navigator.share({
+        title: t('giftForYouTitle'),
+        text: shareText,
+        url: giftUrl,
+      })
+    } catch (err) {
+      if (err?.name !== 'AbortError') {
+        console.error('navigator.share failed:', err)
+      }
+    }
+  }
+
+  // Deep links — har bir messenger uchun kontaktlar ro'yxati ochiladi.
+  // Telegram: rasmiy "share" sahifasi (`t.me/share/url`). Mobilda Telegram ilovasi ochiladi,
+  // u erda kontaktlar ro'yxati ko'rinadi.
+  const telegramHref = `https://t.me/share/url?url=${encodeURIComponent(giftUrl)}&text=${encodeURIComponent(shareText)}`
+  // WhatsApp: `wa.me/?text=...` — kontaktlar ro'yxati ochiladi.
+  const whatsappHref = `https://wa.me/?text=${encodeURIComponent(`${shareText}\n${giftUrl}`)}`
+  // SMS: qurilmaning ichki xabar ilovasi.
+  const smsHref = `sms:?&body=${encodeURIComponent(`${shareText}\n${giftUrl}`)}`
 
   return (
     <div className="fixed inset-0 z-[100] flex items-end justify-center">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-        className="relative w-full max-w-md bg-card rounded-t-3xl flex flex-col" style={{ maxHeight: "90vh" }}
+        className="relative w-full max-w-md bg-card rounded-t-3xl flex flex-col" style={{ maxHeight: '90vh' }}
       >
-        {/* Konfetti emoji */}
-        <div className="text-center mb-5">
-          <div className="text-5xl mb-3">🎁</div>
-          <h3 className="text-xl font-extrabold text-foreground">{t('giftReady')}</h3>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t('giftReadyDesc')}
-          </p>
+        <div className="flex items-center justify-end px-4 pt-4 pb-2 flex-shrink-0">
+          <button onClick={onClose}
+            className="w-8 h-8 rounded-full bg-muted flex items-center justify-center"
+            aria-label="close"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
-        {/* Link */}
-        <div className="bg-muted/50 rounded-2xl p-4 mb-4">
-          <p className="text-xs text-muted-foreground mb-2 font-semibold">{t('giftLinkLabel')}</p>
-          <div className="flex items-center gap-2 bg-card rounded-xl border border-border px-3 py-2">
-            <p className="text-xs text-muted-foreground flex-1 truncate">{giftUrl}</p>
-            <button onClick={handleCopy}
-              className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${copied ? 'bg-green-100' : 'bg-muted'}`}
+        <div className="flex-1 overflow-y-auto px-6 pb-6" style={{ WebkitOverflowScrolling: 'touch' }}>
+          <div className="text-center mb-5">
+            <div className="text-5xl mb-3">🎁</div>
+            <h3 className="text-xl font-extrabold text-foreground">{t('giftReady')}</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              {t('giftReadyDesc')}
+            </p>
+          </div>
+
+          {/* Link */}
+          <div className="bg-muted/50 rounded-2xl p-4 mb-4">
+            <p className="text-xs text-muted-foreground mb-2 font-semibold">{t('giftLinkLabel')}</p>
+            <div className="flex items-center gap-2 bg-card rounded-xl border border-border px-3 py-2">
+              <p className="text-xs text-muted-foreground flex-1 truncate">{giftUrl}</p>
+              <button onClick={handleCopy}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors ${copied ? 'bg-green-100' : 'bg-muted'}`}
+                aria-label={t('copyLink')}
+              >
+                {copied
+                  ? <Check className="w-3.5 h-3.5 text-green-600" />
+                  : <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+                }
+              </button>
+            </div>
+          </div>
+
+          {/* Tezkor ulashish — qaysi ilova orqali yuborishni tanlash */}
+          <p className="text-xs font-semibold text-muted-foreground mb-2">{t('shareVia')}</p>
+          <div className="grid grid-cols-4 gap-2 mb-5">
+            <a
+              href={telegramHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex flex-col items-center gap-1.5 p-3 rounded-2xl border border-border hover:bg-muted/40 transition-colors active:scale-[0.97]"
             >
-              {copied
-                ? <Check className="w-3.5 h-3.5 text-green-600" />
-                : <Copy className="w-3.5 h-3.5 text-muted-foreground" />
-              }
+              <div className="w-10 h-10 rounded-full bg-[#229ED9] flex items-center justify-center text-white">
+                <TelegramIcon className="w-5 h-5" />
+              </div>
+              <span className="text-[11px] font-semibold text-foreground">Telegram</span>
+            </a>
+            <a
+              href={whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex flex-col items-center gap-1.5 p-3 rounded-2xl border border-border hover:bg-muted/40 transition-colors active:scale-[0.97]"
+            >
+              <div className="w-10 h-10 rounded-full bg-[#25D366] flex items-center justify-center text-white">
+                <WhatsAppIcon className="w-5 h-5" />
+              </div>
+              <span className="text-[11px] font-semibold text-foreground">WhatsApp</span>
+            </a>
+            <a
+              href={smsHref}
+              className="flex flex-col items-center gap-1.5 p-3 rounded-2xl border border-border hover:bg-muted/40 transition-colors active:scale-[0.97]"
+            >
+              <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white">
+                <MessageCircle className="w-5 h-5" />
+              </div>
+              <span className="text-[11px] font-semibold text-foreground">SMS</span>
+            </a>
+            <button
+              type="button"
+              onClick={canNativeShare ? handleNativeShare : handleCopy}
+              className="flex flex-col items-center gap-1.5 p-3 rounded-2xl border border-border hover:bg-muted/40 transition-colors active:scale-[0.97]"
+            >
+              <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-foreground">
+                {canNativeShare ? <Share2 className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+              </div>
+              <span className="text-[11px] font-semibold text-foreground">
+                {canNativeShare ? t('shareMore') : t('copyLink')}
+              </span>
             </button>
           </div>
-        </div>
 
-        {/* Qanday ishlaydi */}
-        <div className="bg-card rounded-2xl border border-border/60 p-4 mb-5 space-y-2.5">
-          {[
-            { icon: '1️⃣', textKey: 'giftStep1' },
-            { icon: '2️⃣', textKey: 'giftStep2' },
-            { icon: '3️⃣', textKey: 'giftStep3' },
-          ].map((step, i) => (
-            <div key={i} className="flex items-center gap-3">
-              <span className="text-base">{step.icon}</span>
-              <p className="text-xs text-muted-foreground">{t(step.textKey)}</p>
-            </div>
-          ))}
-        </div>
+          {/* Qanday ishlaydi */}
+          <div className="bg-card rounded-2xl border border-border/60 p-4 mb-5 space-y-2.5">
+            {[
+              { icon: '1️⃣', textKey: 'giftStep1' },
+              { icon: '2️⃣', textKey: 'giftStep2' },
+              { icon: '3️⃣', textKey: 'giftStep3' },
+            ].map((step, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="text-base">{step.icon}</span>
+                <p className="text-xs text-muted-foreground">{t(step.textKey)}</p>
+              </div>
+            ))}
+          </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <button onClick={handleCopy}
-            className="flex items-center justify-center gap-2 py-3 border border-border rounded-xl text-sm font-semibold text-foreground"
-          >
-            <Copy className="w-4 h-4" /> {t('copyLink')}
-          </button>
-          <button onClick={handleShare}
-            className="flex items-center justify-center gap-2 py-3 bg-primary text-white rounded-xl text-sm font-semibold"
-          >
-            <Share2 className="w-4 h-4" /> {t('sendBtn')}
-          </button>
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={handleCopy}
+              className="flex items-center justify-center gap-2 py-3 border border-border rounded-xl text-sm font-semibold text-foreground active:scale-[0.98] transition-transform"
+            >
+              <Copy className="w-4 h-4" /> {t('copyLink')}
+            </button>
+            <button onClick={canNativeShare ? handleNativeShare : () => window.open(telegramHref, '_blank', 'noopener,noreferrer')}
+              className="flex items-center justify-center gap-2 py-3 bg-primary text-white rounded-xl text-sm font-semibold active:scale-[0.98] transition-transform"
+            >
+              <Share2 className="w-4 h-4" /> {t('sendBtn')}
+            </button>
+          </div>
         </div>
       </motion.div>
     </div>
@@ -326,15 +467,46 @@ const GIFT_STATUS = {
 }
 
 function GiftCard({ gift, t, lang }) {
-  const [showLink, setShowLink] = useState(false)
   const giftUrl = `${window.location.origin}/claim-gift/${gift.token}`
   const st = GIFT_STATUS[gift.status] || GIFT_STATUS.pending
   const Icon = st.icon
   const locale = lang === 'en' ? 'en-US' : lang === 'ru' ? 'ru-RU' : 'uz-UZ'
+  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
+  const shareText = `${gift.product_name} ${t('giftShareText')}`
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(giftUrl)
-    toast.success(t('linkCopied'))
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(giftUrl)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = giftUrl
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      toast.success(t('linkCopied'))
+    } catch (err) {
+      console.error('Clipboard write failed:', err)
+      toast.error(t('error'))
+    }
+  }
+
+  const handleShare = async () => {
+    if (canNativeShare) {
+      try {
+        await navigator.share({ title: t('giftForYouTitle'), text: shareText, url: giftUrl })
+        return
+      } catch (err) {
+        if (err?.name === 'AbortError') return
+      }
+    }
+    // Fallback: Telegram share oynasini ochamiz (kontaktlar ro'yxati bilan).
+    const telegramHref = `https://t.me/share/url?url=${encodeURIComponent(giftUrl)}&text=${encodeURIComponent(shareText)}`
+    window.open(telegramHref, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -362,11 +534,18 @@ function GiftCard({ gift, t, lang }) {
       )}
 
       {gift.status === 'pending' && (
-        <button onClick={handleCopy}
-          className="mt-3 w-full flex items-center justify-center gap-2 py-2 border border-border rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <Copy className="w-3.5 h-3.5" /> {t('copyLink')}
-        </button>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button onClick={handleCopy}
+            className="flex items-center justify-center gap-2 py-2 border border-border rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Copy className="w-3.5 h-3.5" /> {t('copyLink')}
+          </button>
+          <button onClick={handleShare}
+            className="flex items-center justify-center gap-2 py-2 bg-primary text-white rounded-xl text-xs font-semibold active:scale-[0.98] transition-transform"
+          >
+            <Share2 className="w-3.5 h-3.5" /> {t('sendBtn')}
+          </button>
+        </div>
       )}
 
       {gift.status === 'claimed' && (

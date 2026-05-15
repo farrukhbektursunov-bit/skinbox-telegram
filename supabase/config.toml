@@ -6,3 +6,8 @@ verify_jwt = false
 
 [functions.click-complete]
 verify_jwt = false
+
+# Telegram webhook (callback_query) JWT yubormaydi — JWT tekshiruvini o'chirib qo'yamiz.
+# Supabase Database Webhook ham shu funksiyani chaqiradi va anon-key bilan o'tadi.
+[functions.notify-telegram]
+verify_jwt = false

@@ -69,11 +69,27 @@ export default function Shop() {
 
   const favoriteIds = favorites.map(f => f.product_id)
 
+  const searchQuery = search.trim().toLowerCase()
+  const isSearching = searchQuery.length > 0
+
   const filtered = products.filter(p => {
-    const matchSearch   = !search || p.name?.toLowerCase().includes(search.toLowerCase())
+    const matchSearch   = !isSearching || p.name?.toLowerCase().includes(searchQuery)
     const matchCategory = !activeCategory || p.category === activeCategory
     return matchSearch && matchCategory
   })
+
+  // Qidiruv natijasi asosida shu turkumdagi o'xshash mahsulotlar
+  const similarProducts = useMemo(() => {
+    if (!isSearching) return []
+    if (filtered.length === 0) return []
+    const matchedIds = new Set(filtered.map(p => p.id))
+    const matchedCategories = new Set(
+      filtered.map(p => p.category).filter(Boolean)
+    )
+    return products
+      .filter(p => !matchedIds.has(p.id) && matchedCategories.has(p.category))
+      .slice(0, 20)
+  }, [isSearching, filtered, products])
 
   const baseForRows = activeCategory
     ? products.filter(p => p.category === activeCategory)
@@ -90,6 +106,7 @@ export default function Shop() {
     .slice(0, 8)
 
   const pageTitle = useMemo(() => {
+    if (isSearching) return t('searchResults')
     if (!activeCategory) return t('recommended')
     const cat = tree?.categories?.find((c) => c.slug === activeCategory)
     if (cat) {
@@ -99,7 +116,7 @@ export default function Shop() {
     const fromI18n = t(activeCategory)
     if (fromI18n && fromI18n !== activeCategory) return fromI18n
     return activeCategory
-  }, [activeCategory, tree, t, lang])
+  }, [isSearching, activeCategory, tree, t, lang])
 
   return (
     <div>
@@ -108,14 +125,25 @@ export default function Shop() {
         <CategoryScroller active={activeCategory} onSelect={handleCategoryChange} />
       </div>
       <div className="pt-[118px]">
-      <ProductRow products={saleProducts} title={t('sale')} favoriteIds={favoriteIds} isSale />
-      <ProductRow products={bestsellerProducts} title={t('bestseller')} favoriteIds={favoriteIds} />
+      {!isSearching && (
+        <>
+          <ProductRow products={saleProducts} title={t('sale')} favoriteIds={favoriteIds} isSale />
+          <ProductRow products={bestsellerProducts} title={t('bestseller')} favoriteIds={favoriteIds} />
+        </>
+      )}
       <ProductGrid
         products={filtered}
         isLoading={isLoading}
         title={pageTitle}
         favoriteIds={favoriteIds}
       />
+      {isSearching && similarProducts.length > 0 && (
+        <ProductGrid
+          products={similarProducts}
+          title={t('similarProducts')}
+          favoriteIds={favoriteIds}
+        />
+      )}
       </div>
     </div>
   )

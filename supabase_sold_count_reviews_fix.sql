@@ -1,17 +1,28 @@
 -- =============================================
--- Mahsulot sahifasida baho va sotuvlar soni ko'rinishi uchun
--- Supabase SQL Editor da ishga tushiring
+-- Mahsulot sahifasida sotuvlar soni va izohlar ko'rinishi uchun.
+-- Supabase SQL Editor da ishga tushiring.
+--
+-- Bu fayl 20260515000700_sold_count_include_confirmed.sql migration
+-- ning takroriy (idempotent) versiyasi. Sotuv "delivered" emas,
+-- balki "confirmed | delivering | delivered" buyurtmalardan sanaladi.
 -- =============================================
 
--- 1. Buyurtma "delivered" bo'lganda products.sold_count ni oshirish
+-- 1. Buyurtma birinchi marta "sold" guruhiga (confirmed/delivering/delivered)
+--    o'tganda products.sold_count ni oshiradigan trigger.
 create or replace function public.increment_sold_count_on_delivered()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare
   item jsonb;
   pid uuid;
   qty int;
+  was_sold boolean;
+  is_sold  boolean;
 begin
-  if new.status = 'delivered' and (old.status is null or old.status != 'delivered') then
+  was_sold := old.status is not null
+              and old.status in ('confirmed','delivering','delivered');
+  is_sold  := new.status in ('confirmed','delivering','delivered');
+
+  if is_sold and not was_sold then
     for item in select * from jsonb_array_elements(coalesce(new.items, '[]'::jsonb))
     loop
       pid := (item->>'product_id')::uuid;
@@ -30,27 +41,29 @@ create trigger on_order_delivered_increment_sold
   after insert or update of status on public.orders
   for each row execute function public.increment_sold_count_on_delivered();
 
--- 2. Mavjud delivered buyurtmalar uchun sold_count ni to'ldirish
+-- 2. Mavjud buyurtmalar uchun sold_count ni qayta hisoblash.
 update public.products p
 set sold_count = coalesce(subq.total, 0)
 from (
   select (item->>'product_id')::uuid as product_id,
     sum(coalesce((item->>'quantity')::int, 1))::int as total
   from public.orders o, jsonb_array_elements(coalesce(o.items, '[]'::jsonb)) as item
-  where o.status = 'delivered' and (item->>'product_id') is not null
+  where o.status in ('confirmed','delivering','delivered')
+    and (item->>'product_id') is not null
   group by (item->>'product_id')::uuid
 ) subq
 where p.id = subq.product_id;
 
--- 3. RPC: mahsulotning haqiqiy sotuvlar sonini buyurtmalardan hisoblash
---    (trigger ishlamasa ham to'g'ri ko'rsatish uchun)
+-- 3. RPC: mahsulotning real sotuvlar sonini buyurtmalardan hisoblash.
+--    (Trigger ishlamasa ham va yangi confirmed buyurtmalar uchun ham
+--    to'g'ri qiymat qaytaradi.)
 create or replace function public.get_product_sold_count(p_product_id uuid)
 returns int language sql stable security definer set search_path = public as $$
   select coalesce(sum(
     coalesce((item->>'quantity')::int, 1)
   ), 0)::int
   from public.orders o, jsonb_array_elements(coalesce(o.items, '[]'::jsonb)) as item
-  where o.status = 'delivered'
+  where o.status in ('confirmed','delivering','delivered')
     and (item->>'product_id')::uuid = p_product_id;
 $$;
 revoke all on function public.get_product_sold_count(uuid) from public;

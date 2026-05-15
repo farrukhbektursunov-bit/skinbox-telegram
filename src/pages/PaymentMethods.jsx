@@ -18,14 +18,12 @@ const CARD_TYPES = [
 
 const INPUT = "w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all"
 
-function CardForm({ onClose, onSaved }) {
-  const { user } = useAuth()
+function CardForm({ onClose }) {
   const { t } = useLang()
   const [f, setF] = useState({
     card_type: 'uzcard', card_number: '', card_name: '',
     expiry: '', cvc: '', card_password: '',
   })
-  const [loading, setLoading] = useState(false)
   const set = (k, v) => setF(p => ({ ...p, [k]: v }))
 
   const formatCard = (val) => val.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim()
@@ -37,47 +35,12 @@ function CardForm({ onClose, onSaved }) {
   const formatCvc = (val) => val.replace(/\D/g, '').slice(0, 4)
   const formatPassword = (val) => val.replace(/\D/g, '').slice(0, 4)
 
-  const handleSave = async (e) => {
+  // UzCard, Humo, Visa va Mastercard provayderlari bilan shartnomalar
+  // hozircha rasmiylashtirilmagan. Shu sababli klient kiritgan karta ma'lumotlari
+  // hech qaerga saqlanmaydi — foydalanuvchiga toast orqali ogohlantirish chiqariladi.
+  const handleSave = (e) => {
     e.preventDefault()
-    const digits = f.card_number.replace(/\D/g, '')
-    if (digits.length < 16) { toast.error(t('cardNumberIncomplete')); return }
-
-    const [mm, yy] = f.expiry.replace(/\D/g, '').length === 4
-      ? [parseInt(f.expiry.slice(0, 2), 10), parseInt(f.expiry.slice(2), 10)]
-      : [0, 0]
-    const year = yy < 100 ? 2000 + yy : yy
-    const now = new Date()
-    if (mm < 1 || mm > 12) { toast.error(t('expiryInvalid')); return }
-    if (year < now.getFullYear() || (year === now.getFullYear() && mm < now.getMonth() + 1)) {
-      toast.error(t('expiryInvalid'))
-      return
-    }
-
-    const cvcClean = f.cvc.replace(/\D/g, '')
-    if (cvcClean.length < 3 || cvcClean.length > 4) { toast.error(t('cvcInvalid')); return }
-
-    const pwdClean = f.card_password.replace(/\D/g, '')
-    if (pwdClean.length !== 4) { toast.error(t('passwordInvalid')); return }
-
-    setLoading(true)
-    try {
-      const { error } = await supabase.from('payment_methods').insert({
-        user_id: user.id,
-        card_type: f.card_type,
-        card_last4: digits.slice(-4),
-        card_name: f.card_name.toUpperCase(),
-        expiry_month: mm,
-        expiry_year: year,
-        cvc: cvcClean,
-        card_password: pwdClean,
-      })
-      if (error) throw error
-      toast.success(t('cardSaved'))
-      onSaved()
-    } catch (err) {
-      console.error(err)
-      toast.error(err?.message || t('error'))
-    } finally { setLoading(false) }
+    toast.error(t('cardSaveUnavailable'))
   }
 
   return (
@@ -86,9 +49,9 @@ function CardForm({ onClose, onSaved }) {
       onClose={onClose}
       title={t('addCard')}
       footer={
-        <button onClick={handleSave} disabled={loading}
-          className="w-full py-3.5 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-60">
-          {loading ? t('saving') : t('save')}
+        <button onClick={handleSave}
+          className="w-full py-3.5 bg-primary text-white rounded-xl text-sm font-semibold">
+          {t('save')}
         </button>
       }
     >
@@ -273,13 +236,7 @@ export default function PaymentMethods() {
       </div>
 
       {showForm && (
-        <CardForm
-          onClose={() => setShowForm(false)}
-          onSaved={() => {
-            setShowForm(false)
-            queryClient.invalidateQueries({ queryKey: ['paymentMethods', user?.id] })
-          }}
-        />
+        <CardForm onClose={() => setShowForm(false)} />
       )}
     </>
   )

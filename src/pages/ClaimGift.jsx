@@ -9,29 +9,37 @@ import {
   CheckCircle, AlertCircle, Loader2, ShoppingBag
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-
-const REGIONS = [
-  "Toshkent shahri","Toshkent viloyati","Samarqand","Buxoro",
-  "Farg\'ona","Andijon","Namangan","Qashqadaryo","Surxondaryo",
-  "Xorazm","Navoiy","Jizzax","Sirdaryo","Qoraqalpog\'iston"
-]
+import { UZ_DELIVERY_REGIONS as REGIONS } from '@/lib/uzRegions'
 
 export default function ClaimGift() {
-  const { token } = useParams()
+  const { token: rawToken } = useParams()
+  // Token URL dan kelganida ortiqcha bo'sh joy yoki yangi qator belgisi bo'lmasligi kerak,
+  // lekin ehtiyot uchun trim qilamiz.
+  const token = (rawToken || '').trim()
   const navigate  = useNavigate()
   const [step, setStep]   = useState('info')   // info | form | success
   const [form, setForm]   = useState({ full_name: '', phone: '', region: '', district: '', address: '' })
   const [loading, setLoading] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  // Sovg'a ma'lumotlarini olish
+  // Sovg'a ma'lumotlarini olish.
+  // RPC `SETOF`/`TABLE` qaytaradi — bo'sh natija `.single()` xatosini bermasligi uchun
+  // `.maybeSingle()` ishlatamiz. Bu "topilmadi" holatini xato emas, balki `data === null`
+  // sifatida qaytaradi va biz UI da to'g'ri ko'rsata olamiz.
   const { data: gift, isLoading, error } = useQuery({
     queryKey: ['gift', token],
+    enabled: !!token,
+    retry: 1,
     queryFn: async () => {
       const { data, error } = await supabase
         .rpc('get_gift_by_token', { p_token: token })
-        .single()
-      if (error) throw error
+        .maybeSingle()
+      if (error) {
+        // Asl xatoni log qilamiz — debug qilish uchun foydali (RPC mavjud emasligi,
+        // permissions, tarmoq xatosi va h.k.).
+        console.error('[ClaimGift] get_gift_by_token error:', error)
+        throw error
+      }
       return data
     },
   })
@@ -72,8 +80,39 @@ export default function ClaimGift() {
     )
   }
 
-  // Topilmadi
-  if (error || !gift) {
+  // Tarmoq/server xatosi (RPC mavjud emas, permission yo'q, ulanish uzilgan va h.k.) —
+  // "topilmadi" dan farqlaymiz, chunki bu holatda foydalanuvchi qayta urinib ko'rishi mumkin.
+  if (error) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-5 text-center">
+        <AlertCircle className="w-16 h-16 text-destructive/50 mb-4" />
+        <h2 className="text-xl font-bold text-foreground mb-2">Xatolik yuz berdi</h2>
+        <p className="text-sm text-muted-foreground mb-2">
+          Sovg'a ma'lumotlarini yuklab bo'lmadi. Internet ulanishingizni tekshiring.
+        </p>
+        {error?.message && (
+          <p className="text-[11px] text-muted-foreground/70 mb-6 max-w-xs break-words">
+            {error.message}
+          </p>
+        )}
+        <div className="flex gap-2">
+          <button onClick={() => window.location.reload()}
+            className="px-5 py-2.5 bg-primary text-white rounded-xl text-sm font-semibold"
+          >
+            Qayta urinish
+          </button>
+          <button onClick={() => navigate('/')}
+            className="px-5 py-2.5 border border-border text-foreground rounded-xl text-sm font-semibold"
+          >
+            Bosh sahifa
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Token noto'g'ri yoki sovg'a o'chirilgan — DB da topilmadi.
+  if (!gift) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center px-5 text-center">
         <AlertCircle className="w-16 h-16 text-destructive/50 mb-4" />

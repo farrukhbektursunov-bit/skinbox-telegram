@@ -1,12 +1,6 @@
 // VariantSelector — faqat variantlar bo'lsa ko'rsatiladi
-
-const TYPE_LABELS = {
-  color:  'Rang',
-  size:   'O\'lcham',
-  volume: 'Hajm',
-  weight: 'Og\'irlik',
-  other:  'Tur',
-}
+import { useLang } from '@/lib/LangContext'
+import { getVariantTypeLabel } from '@/lib/i18n'
 
 // Rang doirasi
 function ColorOption({ variant, selected, onSelect }) {
@@ -75,6 +69,8 @@ function TextOption({ variant, selected, onSelect }) {
 }
 
 export default function VariantSelector({ variants = [], selected = {}, onSelect }) {
+  const { lang } = useLang()
+
   if (!variants.length) return null
 
   // Variantlarni type bo'yicha guruhlash
@@ -92,7 +88,7 @@ export default function VariantSelector({ variants = [], selected = {}, onSelect
           <div key={type}>
             <div className="flex items-center gap-2 mb-2.5">
               <span className="text-sm font-bold text-foreground">
-                {TYPE_LABELS[type] || type}
+                {getVariantTypeLabel(type, lang)}
               </span>
               {currentSelected && (
                 <span className="text-sm text-muted-foreground">

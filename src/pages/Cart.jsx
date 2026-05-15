@@ -5,72 +5,15 @@ import { supabase } from '@/api/supabase'
 import { cartItemsQueryKey, fetchCartItems } from '@/lib/cartItemsQuery'
 import { useAuth } from '@/lib/AuthContext'
 import { useLang } from '@/lib/LangContext'
+import { REGION_NAMES } from '@/lib/i18n'
 import { getFirstImage, getDisplayImages, onProductImageError } from '@/lib/productImages'
-import { ShoppingCart, Trash2, Plus, Minus, MapPin, Phone, User, FileText, ChevronLeft, Tag, Check, KeyRound, Wallet, CreditCard } from 'lucide-react'
+import { ShoppingCart, Trash2, Plus, Minus, MapPin, Phone, User, FileText, ChevronLeft, Tag, Check, KeyRound, Wallet, CreditCard, Smartphone } from 'lucide-react'
 import { motion } from 'framer-motion'
 import BottomSheet from '@/components/shop/BottomSheet'
 import toast from 'react-hot-toast'
 import { filterNameInput, filterPhoneInput, parsePhoneForInput, formatPhoneForSave, PHONE_PREFIX } from '@/lib/authUtils'
 import { buildClickPayUrl, isClickConfigured } from '@/lib/clickPay'
-
-// #region agent log
-// Vaqtincha debug: Click oqimida har qadam — localhost log + console + toast (qisqa) + ekran overlay.
-// Sessiya 58347f — diagnostika tugagach olib tashlanadi.
-const __DBG_ENDPOINT = 'http://127.0.0.1:7729/ingest/5faedbbe-0012-4cc2-aeed-9c5d055b8eb0'
-const __DBG_SID = '58347f'
-function __dbgRenderOverlay() {
-  try {
-    if (typeof window === 'undefined' || typeof document === 'undefined') return
-    let el = document.getElementById('__skinbox_dbg_overlay__')
-    if (!el) {
-      el = document.createElement('div')
-      el.id = '__skinbox_dbg_overlay__'
-      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;max-height:55vh;overflow:auto;background:rgba(0,0,0,0.92);color:#0f0;font:11px/1.35 ui-monospace,monospace;padding:8px 10px 12px;z-index:2147483647;white-space:pre-wrap;word-break:break-word;border-top:2px solid #0f0;'
-      const close = document.createElement('button')
-      close.textContent = '×'
-      close.style.cssText = 'position:absolute;top:2px;right:6px;background:transparent;color:#fff;border:0;font-size:18px;cursor:pointer'
-      close.onclick = () => el && (el.style.display = 'none')
-      el.appendChild(close)
-      const copy = document.createElement('button')
-      copy.textContent = 'copy'
-      copy.style.cssText = 'position:absolute;top:2px;right:30px;background:transparent;color:#9cf;border:1px solid #9cf;font-size:10px;padding:0 6px;cursor:pointer'
-      copy.onclick = () => {
-        try { navigator.clipboard.writeText(JSON.stringify(window.__skinboxDbg || [], null, 2)) } catch {}
-      }
-      el.appendChild(copy)
-      document.body.appendChild(el)
-    }
-    const logs = (window.__skinboxDbg || []).slice(-12)
-    const body = logs.map((l) => {
-      const time = new Date(l.timestamp).toLocaleTimeString()
-      return `[${time}] ${l.location}\n  ${l.message}\n  ${JSON.stringify(l.data)}`
-    }).join('\n\n')
-    let content = el.querySelector('pre')
-    if (!content) { content = document.createElement('pre'); content.style.cssText = 'margin:0;color:#cfc'; el.appendChild(content) }
-    content.textContent = body
-    el.style.display = 'block'
-  } catch {}
-}
-function __dbg(location, message, data) {
-  const payload = { sessionId: __DBG_SID, location, message, data, timestamp: Date.now() }
-  try { console.log('[skinbox-dbg]', location, message, data) } catch {}
-  try {
-    fetch(__DBG_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': __DBG_SID },
-      body: JSON.stringify(payload),
-      keepalive: true,
-    }).catch(() => {})
-  } catch {}
-  try {
-    if (typeof window !== 'undefined') {
-      window.__skinboxDbg = window.__skinboxDbg || []
-      window.__skinboxDbg.push(payload)
-    }
-  } catch {}
-  __dbgRenderOverlay()
-}
-// #endregion
+import { UZ_DELIVERY_REGIONS, computeDeliveryShipping } from '@/lib/uzRegions'
 
 const INPUT = "w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all"
 
@@ -94,10 +37,13 @@ function orderErrorFullText(err) {
   return parts.join('\n')
 }
 
-function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap, onClose, onSuccess }) {
+function OrderForm({ cartItems, subtotal, saleDiscount, productMap, onClose, onSuccess }) {
   const { user } = useAuth()
-  const { t } = useLang()
-  const [form, setForm] = useState({ full_name: '', phone: '', address: '', building_number: '', apartment_number: '', entrance_note: '', delivery_instruction: 'door', note: '' })
+  const { t, lang } = useLang()
+  const [form, setForm] = useState({
+    full_name: '', phone: '', region: '', address: '', building_number: '', apartment_number: '',
+    entrance_note: '', delivery_instruction: 'door', note: '',
+  })
   const [loading, setLoading] = useState(false)
   const [couponCode, setCouponCode] = useState('')
   const [appliedCoupon, setAppliedCoupon] = useState(null)
@@ -105,14 +51,21 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
   const [payMode, setPayMode] = useState('cod')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
+  // MUHIM: Cart komponentidagi `defaultAddress` query bilan to'qnashmasligi uchun
+  // alohida query key (`defaultAddressFull`) ishlatamiz — bu yerda barcha maydonlar
+  // (full_name, phone, district, ...) kerak.
   const { data: defaultAddress } = useQuery({
-    queryKey: ['defaultAddress', user?.id],
+    queryKey: ['defaultAddressFull', user?.id],
     queryFn: async () => {
+      // Avval default manzilni izlaymiz, agar topilmasa eng so'nggi qo'shilganini olamiz.
+      // Shu sababli foydalanuvchi manzil kiritgan bo'lsa ham (lekin "asosiy" deb belgilamagan
+      // bo'lsa), buyurtma forma avtomatik to'ldiriladi.
       const { data } = await supabase
         .from('addresses')
         .select('*')
         .eq('user_id', user.id)
-        .eq('is_default', true)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
       return data
@@ -121,13 +74,14 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
   })
   useEffect(() => {
     if (defaultAddress) {
-      const parts = [defaultAddress.region, defaultAddress.district, defaultAddress.address].filter(Boolean)
-      const fullAddress = parts.join(', ')
+      const parts = [defaultAddress.district, defaultAddress.address].filter(Boolean)
+      const lineAddress = parts.join(', ')
       setForm(f => ({
         ...f,
         full_name: filterNameInput(defaultAddress.full_name || '') || f.full_name,
         phone: parsePhoneForInput(defaultAddress.phone || '') || f.phone,
-        address: fullAddress || f.address,
+        region: defaultAddress.region || f.region,
+        address: lineAddress || f.address,
         building_number: defaultAddress.building_number || f.building_number,
         apartment_number: defaultAddress.apartment_number || f.apartment_number,
         entrance_note: defaultAddress.entrance_note || defaultAddress.entrance_password || f.entrance_note,
@@ -136,9 +90,46 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
     }
   }, [defaultAddress])
 
+  const { data: shippingSettings } = useQuery({
+    queryKey: ['appSettings', 'shipping'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('key, value')
+        .in('key', ['shipping_cost', 'shipping_cost_tashkent', 'shipping_cost_regions', 'free_shipping_min'])
+      if (error) {
+        console.warn('[OrderForm] app_settings:', error.message)
+        return null
+      }
+      const map = Object.fromEntries((data || []).map((r) => [r.key, r.value]))
+      const parseNum = (v) => {
+        if (v == null) return null
+        if (typeof v === 'number' && Number.isFinite(v)) return v
+        const n = Number(v)
+        return Number.isFinite(n) ? n : null
+      }
+      const legacy = parseNum(map.shipping_cost) ?? 15000
+      return {
+        costTashkent: parseNum(map.shipping_cost_tashkent) ?? legacy,
+        costRegions: parseNum(map.shipping_cost_regions) ?? legacy,
+        freeShippingMin: parseNum(map.free_shipping_min) ?? 200000,
+      }
+    },
+    staleTime: 5_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+  })
+
   // Eslatma: Kupon va jami narx server tomonida (DB trigger / RPC) majburlanadi.
   // Bu yerdagi qiymatlar faqat UI ko'rsatish (preview) uchun — yakuniy hisob serverdan keladi.
   const couponDiscount = appliedCoupon?.discount ?? 0
+  const shippingCost = computeDeliveryShipping({
+    subtotalLessDiscount: subtotal - couponDiscount,
+    region: form.region,
+    freeShippingMin: shippingSettings?.freeShippingMin ?? 200000,
+    costTashkent: shippingSettings?.costTashkent ?? 15000,
+    costRegions: shippingSettings?.costRegions ?? 15000,
+  })
   const total = Math.max(0, subtotal - couponDiscount + shippingCost)
 
   const applyCoupon = async () => {
@@ -171,7 +162,7 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
   }
 
   const buildOrderAddress = () => {
-    let addr = form.address
+    let addr = [form.region, form.address].filter(Boolean).join(', ')
     if (form.building_number || form.apartment_number) {
       const extras = [form.building_number && `${t('buildingNumber')}: ${form.building_number}`, form.apartment_number && `${t('apartmentNumber')}: ${form.apartment_number}`].filter(Boolean)
       addr = addr ? `${addr}, ${extras.join(', ')}` : extras.join(', ')
@@ -252,13 +243,9 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       return
     }
 
-    const detail = [err?.details, err?.hint, err?.message].find((s) => typeof s === 'string' && s.trim().length > 0)
-    const cleaned = String(detail || full || '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 260)
-    if (cleaned.length > 12) toast.error(`${t('error')} · ${cleaned}`)
-    else toast.error(t('error'))
+    // Texnik DB matnini foydalanuvchiga ko'rsatmaslik uchun faqat developer console'ga yozamiz.
+    if (full) console.error('[Cart] order error:', full)
+    toast.error(t('error'))
   }
 
   const handleSubmit = async () => {
@@ -266,7 +253,7 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       toast.error(t('orderErrorSession'))
       return
     }
-    if (!form.full_name || !form.phone || form.phone.length < 9 || !form.address) {
+    if (!form.full_name || !form.phone || form.phone.length < 9 || !form.region || !form.address) {
       toast.error(t('fillRequiredFields')); return
     }
     for (const i of cartItems) {
@@ -283,41 +270,20 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       }
     }
 
-    // #region agent log
-    __dbg('Cart.jsx:handleSubmit:entry', 'pay button pressed', {
-      hypothesisId: 'H1,H2,H3,H4,H5',
-      payMode,
-      total,
-      subtotal,
-      cartItemsCount: cartItems.length,
-      hasCouponDiscount: !!appliedCoupon,
-      origin: typeof window !== 'undefined' ? window.location.origin : null,
-      hostname: typeof window !== 'undefined' ? window.location.hostname : null,
-    })
-    // #endregion
+    // Payme provayderi bilan shartnoma hali yo'q — foydalanuvchini ogohlantirib,
+    // buyurtmani yubormaymiz. (Click/COD ishlaydigan variantlar sifatida qoladi.)
+    if (payMode === 'payme') {
+      toast.error(t('paymeUnavailable'))
+      return
+    }
 
     if (payMode === 'click' && !isClickConfigured()) {
-      // #region agent log
-      __dbg('Cart.jsx:handleSubmit:isClickConfigured=false', 'env missing', {
-        hypothesisId: 'H3,H5',
-        envSnapshot: {
-          merchantId: import.meta.env.VITE_CLICK_MERCHANT_ID || '(empty)',
-          serviceId: import.meta.env.VITE_CLICK_SERVICE_ID || '(empty)',
-          merchantUserId: import.meta.env.VITE_CLICK_MERCHANT_USER_ID || '(empty)',
-        },
-      })
-      toast.error(t('clickNotConfigured') + ' [DBG:H3]')
-      // #endregion
+      toast.error(t('clickNotConfigured'))
       return
     }
 
     if (payMode === 'click' && total <= 0) {
-      // #region agent log
-      __dbg('Cart.jsx:handleSubmit:clientTotalNonPositive', 'preview total <= 0', {
-        hypothesisId: 'H2', total, subtotal,
-      })
-      toast.error(t('clickRequiresPositiveTotal') + ' [DBG:client-total]')
-      // #endregion
+      toast.error(t('clickRequiresPositiveTotal'))
       return
     }
 
@@ -332,20 +298,6 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       // MUHIM: `total`, `subtotal`, `shipping_cost`, `discount_total` va `items[].price`
       // server tomonida BEFORE INSERT trigger (`aa_orders_recompute_total`) tomonidan qayta hisoblanadi.
       // Klient yuborgan narxlar e'tiborga olinmaydi — DB dan o'qiladi.
-      // #region agent log
-      __dbg('Cart.jsx:beforeInsert', 'about to call supabase.from(orders).insert', {
-        hypothesisId: 'H1,H2',
-        orderStatus,
-        payMode,
-        appliedCouponCode: appliedCoupon?.code || null,
-        itemsCount: cartItems.length,
-        itemSample: cartItems[0] ? {
-          product_id: cartItems[0].product_id,
-          quantity: cartItems[0].quantity,
-          hasName: !!cartItems[0].product_name,
-        } : null,
-      })
-      // #endregion
       const { data: insertedRows, error } = await supabase.from('orders').insert({
         user_id: user.id,
         items: cartItems.map(i => ({
@@ -353,24 +305,12 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
           image: i.product_image, quantity: Number(i.quantity),
         })),
         total: 0, status: orderStatus,
+        payment_method: payMode === 'click' ? 'click' : 'cod',
         coupon_code: appliedCoupon?.code || null,
         full_name: form.full_name, phone: formatPhoneForSave(form.phone),
+        delivery_region: form.region,
         address: buildOrderAddress(), note: buildOrderNote(),
       }).select('id, total')
-      // #region agent log
-      __dbg('Cart.jsx:afterInsert', 'insert returned', {
-        hypothesisId: 'H1,H2',
-        hasError: !!error,
-        errorCode: error?.code || null,
-        errorMessage: (error?.message || '').slice(0, 240),
-        errorDetails: (error?.details || '').slice(0, 240),
-        errorHint: (error?.hint || '').slice(0, 240),
-        insertedRows: Array.isArray(insertedRows) ? insertedRows.map(r => ({ id: r?.id ? String(r.id).slice(0, 8) + '…' : null, total: r?.total })) : insertedRows,
-      })
-      if (error) {
-        toast.error('[DBG:H1] ' + (error.code || '') + ' ' + ((error.message || '').slice(0, 80)))
-      }
-      // #endregion
       if (error) throw error
       const inserted = Array.isArray(insertedRows) ? insertedRows[0] : null
       if (!inserted?.id) {
@@ -386,20 +326,8 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       if (payMode === 'click') {
         // Click uchun summa server qaytargan `total` dan olinadi (klient hisob-kitobi emas).
         const serverTotal = Number(inserted.total)
-        // #region agent log
-        __dbg('Cart.jsx:click:serverTotal', 'server returned total', {
-          hypothesisId: 'H2',
-          rawTotal: inserted.total,
-          typeofRawTotal: typeof inserted.total,
-          serverTotalNumber: serverTotal,
-          isFinite: Number.isFinite(serverTotal),
-          insertedId: inserted.id ? String(inserted.id).slice(0, 8) + '…' : null,
-        })
-        // #endregion
         if (!Number.isFinite(serverTotal) || serverTotal <= 0) {
-          // #region agent log
-          toast.error(t('clickRequiresPositiveTotal') + ' [DBG:H2:server-total=' + String(inserted.total) + ']')
-          // #endregion
+          toast.error(t('clickRequiresPositiveTotal'))
           return
         }
         try {
@@ -409,29 +337,9 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
             merchantTransId: inserted.id,
             returnUrl,
           })
-          // #region agent log
-          __dbg('Cart.jsx:click:builtPayUrl', 'payUrl ready, about to assign', {
-            hypothesisId: 'H3,H4',
-            payUrlHost: (() => { try { return new URL(payUrl).host } catch { return null } })(),
-            payUrlLength: payUrl.length,
-            amountSent: serverTotal,
-          })
-          // #endregion
           window.location.assign(payUrl)
-          // #region agent log
-          __dbg('Cart.jsx:click:afterAssign', 'assign returned (navigation may be blocked)', {
-            hypothesisId: 'H4',
-            stillOnSameOrigin: typeof window !== 'undefined' ? window.location.origin : null,
-          })
-          // #endregion
-        } catch (e) {
-          // #region agent log
-          __dbg('Cart.jsx:click:buildOrAssignError', 'error building/assigning click url', {
-            hypothesisId: 'H3,H4',
-            errMessage: (e?.message || String(e)).slice(0, 240),
-          })
-          toast.error('[DBG:H3] ' + ((e?.message || String(e)).slice(0, 100)))
-          // #endregion
+        } catch {
+          toast.error(t('error'))
         }
         return
       }
@@ -509,29 +417,30 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       </div>
       <div className="mb-4 space-y-2">
         <p className="text-xs font-semibold text-muted-foreground">{t('selectPaymentMethod')}</p>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setPayMode('cod')}
-            className={`flex flex-col items-start gap-1 p-3 rounded-xl border text-left transition-all ${
-              payMode === 'cod' ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'border-border bg-muted/30'
-            }`}
-          >
-            <Wallet className="w-4 h-4 text-foreground" />
-            <span className="text-xs font-bold">{t('paymentCod')}</span>
-            <span className="text-[10px] text-muted-foreground leading-tight">{t('paymentCodDesc')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setPayMode('click')}
-            className={`flex flex-col items-start gap-1 p-3 rounded-xl border text-left transition-all ${
-              payMode === 'click' ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'border-border bg-muted/30'
-            }`}
-          >
-            <CreditCard className="w-4 h-4 text-orange-600" />
-            <span className="text-xs font-bold">{t('paymentClick')}</span>
-            <span className="text-[10px] text-muted-foreground leading-tight">{t('paymentClickDesc')}</span>
-          </button>
+        <div className="bg-card rounded-2xl border border-border/60 overflow-hidden divide-y divide-border/40">
+          {[
+            { id: 'cod',   label: t('paymentCod'),   desc: t('paymentCodDesc'),   icon: <div className="w-9 h-9 rounded-xl bg-muted flex items-center justify-center"><Wallet className="w-4 h-4 text-foreground" /></div> },
+            { id: 'payme', label: t('payme'),        desc: t('paymeDesc'),        icon: <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center"><Smartphone className="w-4 h-4 text-white" /></div> },
+            { id: 'click', label: t('paymentClick'), desc: t('paymentClickDesc'), icon: <div className="w-9 h-9 rounded-xl bg-orange-500 flex items-center justify-center"><CreditCard className="w-4 h-4 text-white" /></div> },
+          ].map(m => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => setPayMode(m.id)}
+              className="w-full flex items-center gap-3 px-3 py-3 hover:bg-muted/30 transition-colors text-left"
+            >
+              {m.icon}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-foreground truncate">{m.label}</p>
+                <p className="text-[11px] text-muted-foreground leading-tight truncate">{m.desc}</p>
+              </div>
+              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                payMode === m.id ? 'border-primary bg-primary' : 'border-border'
+              }`}>
+                {payMode === m.id && <div className="w-2 h-2 bg-white rounded-full" />}
+              </div>
+            </button>
+          ))}
         </div>
       </div>
       <div className="space-y-4">
@@ -553,6 +462,17 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
               className="flex-1 min-w-0 py-3 pr-4 bg-transparent border-none outline-none focus:ring-0"
             />
           </div>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+            <MapPin className="w-3.5 h-3.5" /> {t('regionLabel')}
+          </label>
+          <select value={form.region} onChange={e => set('region', e.target.value)} className={INPUT}>
+            <option value="">{t('regionLabel')}…</option>
+            {UZ_DELIVERY_REGIONS.map((r) => (
+              <option key={r} value={r}>{REGION_NAMES[lang]?.[r] ?? r}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="text-xs font-semibold text-muted-foreground mb-1.5 flex items-center gap-1.5">
@@ -769,6 +689,22 @@ export default function Cart() {
 
   const subtotal = selectedItems.reduce((s, i) => s + Number(i.price) * Number(i.quantity), 0)
 
+  const { data: defaultAddress } = useQuery({
+    queryKey: ['defaultAddress', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('addresses')
+        .select('region')
+        .eq('user_id', user.id)
+        .order('is_default', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      return data
+    },
+    enabled: !!user?.id,
+  })
+
   // Yetkazib berish narxi sozlamalari — admin panel orqali boshqariladi.
   // Server (DB trigger) yakuniy hisobni shu jadvaldan o'qib amalga oshiradi.
   const { data: shippingSettings } = useQuery({
@@ -777,7 +713,7 @@ export default function Cart() {
       const { data, error } = await supabase
         .from('app_settings')
         .select('key, value')
-        .in('key', ['shipping_cost', 'free_shipping_min'])
+        .in('key', ['shipping_cost', 'shipping_cost_tashkent', 'shipping_cost_regions', 'free_shipping_min'])
       if (error) {
         console.warn('[Cart] app_settings o\'qishda xato:', error.message)
         return null
@@ -789,20 +725,27 @@ export default function Cart() {
         const n = Number(v)
         return Number.isFinite(n) ? n : null
       }
+      const legacy = parseNum(map.shipping_cost) ?? 15000
       return {
-        shippingCost: parseNum(map.shipping_cost),
-        freeShippingMin: parseNum(map.free_shipping_min),
+        costTashkent: parseNum(map.shipping_cost_tashkent) ?? legacy,
+        costRegions: parseNum(map.shipping_cost_regions) ?? legacy,
+        freeShippingMin: parseNum(map.free_shipping_min) ?? 200000,
       }
     },
     staleTime: 5_000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: true,
   })
-  const SHIPPING_COST = shippingSettings?.shippingCost ?? 15000
-  const FREE_SHIPPING_MIN = shippingSettings?.freeShippingMin ?? 200000
-  const shippingCost = selectedItems.length === 0
-    ? 0
-    : (FREE_SHIPPING_MIN > 0 && subtotal >= FREE_SHIPPING_MIN ? 0 : SHIPPING_COST)
+  const shippingCost =
+    selectedItems.length === 0
+      ? 0
+      : computeDeliveryShipping({
+          subtotalLessDiscount: subtotal,
+          region: defaultAddress?.region || '',
+          freeShippingMin: shippingSettings?.freeShippingMin ?? 200000,
+          costTashkent: shippingSettings?.costTashkent ?? 15000,
+          costRegions: shippingSettings?.costRegions ?? 15000,
+        })
 
   let saleDiscount = 0
   for (const item of selectedItems) {
@@ -1037,7 +980,6 @@ export default function Cart() {
           cartItems={selectedItems}
           subtotal={subtotal}
           saleDiscount={saleDiscount}
-          shippingCost={shippingCost}
           productMap={productMap}
           onClose={() => setShowOrder(false)}
           onSuccess={handleOrderSuccess}

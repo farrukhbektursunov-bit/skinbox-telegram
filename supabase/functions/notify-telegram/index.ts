@@ -5,16 +5,72 @@ const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
 const TELEGRAM_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID") ?? "";
 
 const STATUS_LABELS: Record<string, string> = {
-  pending:    "⏳ Kutilmoqda",
-  confirmed:  "✅ Tasdiqlangan",
-  delivering: "🚚 Yetkazilmoqda",
-  delivered:  "📦 Yetkazilgan",
-  cancelled:  "❌ Bekor qilingan",
+  awaiting_payment: "💳 To'lov kutilmoqda",
+  pending:          "⏳ Kutilmoqda",
+  confirmed:        "✅ Tasdiqlangan",
+  delivering:       "🚚 Yetkazilmoqda",
+  delivered:        "📦 Yetkazilgan",
+  cancelled:        "❌ Bekor qilingan",
 };
 
+const PAYMENT_LABELS: Record<string, string> = {
+  cod:   "💵 Naqd — yetkazib berishda",
+  click: "💳 Click (online)",
+};
+
+function paymentLabel(order: any): string {
+  if (order?.payment_method && PAYMENT_LABELS[order.payment_method]) {
+    return PAYMENT_LABELS[order.payment_method];
+  }
+  // Eski yozuvlar yoki migratsiyadan oldingi buyurtmalar uchun status bo'yicha taxmin.
+  if (order?.status === "awaiting_payment") return PAYMENT_LABELS.click;
+  return PAYMENT_LABELS.cod;
+}
+
+function formatItems(items: unknown): string {
+  if (!Array.isArray(items)) return JSON.stringify(items);
+  return items
+    .map((i: any) => {
+      const name = i?.product_name || i?.name || "Mahsulot";
+      const qty = Number(i?.quantity ?? 1);
+      const price = Number(i?.price ?? 0);
+      const priceStr = Number.isFinite(price) ? price.toLocaleString() : "0";
+      return `  • ${name} x${qty} — ${priceStr} so'm`;
+    })
+    .join("\n");
+}
+
+function buildOrderText(order: any, opts?: { isNew?: boolean }): string {
+  const idShort = String(order.id).slice(0, 8).toUpperCase();
+  const title = opts?.isNew
+    ? `🆕 <b>YANGI BUYURTMA #${idShort}</b>`
+    : `🛍 <b>BUYURTMA #${idShort}</b>`;
+
+  return [
+    title,
+    "",
+    `👤 <b>Mijoz:</b> ${order.full_name ?? "-"}`,
+    `📞 <b>Telefon:</b> ${order.phone ?? "-"}`,
+    `📍 <b>Manzil:</b> ${order.address ?? "-"}`,
+    order.note ? `📝 <b>Izoh:</b> ${order.note}` : null,
+    "",
+    `🧾 <b>Mahsulotlar:</b>`,
+    formatItems(order.items),
+    "",
+    `💳 <b>To'lov usuli:</b> ${paymentLabel(order)}`,
+    `💰 <b>Jami:</b> ${Number(order.total ?? 0).toLocaleString()} so'm`,
+    `📊 <b>Holat:</b> ${STATUS_LABELS[order.status] || order.status}`,
+    `🕐 <b>Vaqt:</b> ${new Date(order.created_at).toLocaleString("uz-UZ")}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 async function sendTelegram(text: string, keyboard?: object) {
-  console.log("TOKEN exists:", !!TELEGRAM_BOT_TOKEN);
-  console.log("CHAT_ID:", TELEGRAM_CHAT_ID);
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.error("Telegram konfiguratsiya yo'q: TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID");
+    return { ok: false, error: "no telegram config" };
+  }
 
   const body: Record<string, unknown> = {
     chat_id: TELEGRAM_CHAT_ID,
@@ -29,195 +85,206 @@ async function sendTelegram(text: string, keyboard?: object) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }
+    },
   );
 
   const result = await res.json();
-  console.log("Telegram response:", JSON.stringify(result));
+  if (!result.ok) console.error("Telegram sendMessage error:", JSON.stringify(result));
   return result;
 }
 
 function buildKeyboard(orderId: string, currentStatus: string) {
-  const statusFlow = ["pending", "confirmed", "delivering", "delivered"];
-  const currentIndex = statusFlow.indexOf(currentStatus);
-  const nextStatus = statusFlow[currentIndex + 1];
-  const buttons = [];
+  // Tugmalarni status bo'yicha aniq belgilab beramiz.
+  // awaiting_payment uchun "Tasdiqlash" tugmasi YO'Q — Click avtomatik tasdiqlaydi.
+  const buttons: Array<{ text: string; callback_data: string }> = [];
 
-  if (nextStatus) {
-    const nextLabel: Record<string, string> = {
-      confirmed:  "✅ Tasdiqlash",
-      delivering: "🚚 Yetkazilmoqda",
-      delivered:  "📦 Yetkazildi",
-    };
-    buttons.push({
-      text: nextLabel[nextStatus] || nextStatus,
-      callback_data: `status:${orderId}`,
-    });
+  const NEXT: Record<string, { text: string; status: string }> = {
+    pending:    { text: "✅ Tasdiqlash",   status: "confirmed"  },
+    confirmed:  { text: "🚚 Yetkazilmoqda", status: "delivering" },
+    delivering: { text: "📦 Yetkazildi",    status: "delivered"  },
+  };
+
+  const next = NEXT[currentStatus];
+  if (next) {
+    buttons.push({ text: next.text, callback_data: `status:${orderId}` });
   }
 
   if (currentStatus !== "cancelled" && currentStatus !== "delivered") {
-    buttons.push({
-      text: "❌ Bekor qilish",
-      callback_data: `cancel:${orderId}`,
-    });
+    buttons.push({ text: "❌ Bekor qilish", callback_data: `cancel:${orderId}` });
   }
 
   return { inline_keyboard: buttons.length > 0 ? [buttons] : [] };
 }
 
+function nextStatusFor(currentStatus: string): string | null {
+  const map: Record<string, string> = {
+    pending:    "confirmed",
+    confirmed:  "delivering",
+    delivering: "delivered",
+  };
+  return map[currentStatus] ?? null;
+}
+
+async function answerCallback(callbackId: string, text: string) {
+  if (!TELEGRAM_BOT_TOKEN) return;
+  try {
+    await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callback_query_id: callbackId, text }),
+      },
+    );
+  } catch (err) {
+    console.error("answerCallback error:", String(err));
+  }
+}
+
+async function editTelegramMessage(
+  chatId: number | string,
+  messageId: number,
+  text: string,
+  keyboard: object,
+) {
+  if (!TELEGRAM_BOT_TOKEN) return;
+  await fetch(
+    `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/editMessageText`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      }),
+    },
+  );
+}
+
 serve(async (req) => {
+  // Telegram webhook GET bilan ham sog'liqni tekshirishi mumkin — 200 qaytaramiz.
+  if (req.method !== "POST") {
+    return new Response("ok", { status: 200 });
+  }
+
   try {
     const body = await req.json();
-    console.log("Request body keys:", Object.keys(body));
 
-    if (body.callback_query) {
+    // ---------- 1) Telegram callback_query (tugma bosildi) ----------
+    if (body?.callback_query) {
+      // Telegram dan kelganligini tekshirish: TELEGRAM_WEBHOOK_SECRET
+      // o'rnatilgan bo'lsa, X-Telegram-Bot-Api-Secret-Token headerini solishtirамiz.
+      const secret = Deno.env.get("TELEGRAM_WEBHOOK_SECRET") ?? "";
+      if (secret) {
+        const incoming = req.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
+        if (incoming !== secret) {
+          console.warn("notify-telegram: callback_query - invalid secret token");
+          return new Response("Unauthorized", { status: 401 });
+        }
+      }
+
       const cb = body.callback_query;
-      const [action, orderId] = cb.data.split(":");
+      const data: string = cb?.data ?? "";
+      const [action, orderId] = data.split(":");
+
+      if (!action || !orderId) {
+        await answerCallback(cb.id, "Noto'g'ri so'rov");
+        return new Response("ok");
+      }
 
       const supabase = createClient(
         Deno.env.get("SUPABASE_URL") ?? "",
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
       );
 
+      const { data: order, error: orderErr } = await supabase
+        .from("orders")
+        .select("*")
+        .eq("id", orderId)
+        .maybeSingle();
+
+      if (orderErr || !order) {
+        await answerCallback(cb.id, "Buyurtma topilmadi");
+        return new Response("ok");
+      }
+
       if (action === "status") {
-        const { data: order } = await supabase
-          .from("orders").select("*").eq("id", orderId).single();
-
-        const statusFlow = ["pending", "confirmed", "delivering", "delivered"];
-        const currentIndex = statusFlow.indexOf(order.status);
-        const nextStatus = statusFlow[currentIndex + 1];
-
-        if (!nextStatus) {
-          await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ callback_query_id: cb.id, text: "Allaqachon yetkazilgan!" }),
-          });
+        const next = nextStatusFor(order.status);
+        if (!next) {
+          await answerCallback(cb.id, "Bu buyurtmani o'zgartirib bo'lmaydi");
           return new Response("ok");
         }
 
-        await supabase.from("orders").update({ status: nextStatus }).eq("id", orderId);
+        const { data: updated, error: updErr } = await supabase
+          .from("orders")
+          .update({ status: next })
+          .eq("id", orderId)
+          .select("*")
+          .maybeSingle();
 
-        const items = Array.isArray(order.items)
-          ? order.items.map((i: any) => `  • ${i.name} x${i.quantity} — ${i.price?.toLocaleString()} so'm`).join("\n")
-          : JSON.stringify(order.items);
+        if (updErr || !updated) {
+          console.error("status update error:", updErr);
+          await answerCallback(cb.id, "Xatolik yuz berdi");
+          return new Response("ok");
+        }
 
-        const updatedText = [
-          `🛍 <b>BUYURTMA #${order.id.slice(0, 8).toUpperCase()}</b>`,
-          "",
-          `👤 <b>Mijoz:</b> ${order.full_name}`,
-          `📞 <b>Telefon:</b> ${order.phone}`,
-          `📍 <b>Manzil:</b> ${order.address}`,
-          order.note ? `📝 <b>Izoh:</b> ${order.note}` : null,
-          "",
-          `🧾 <b>Mahsulotlar:</b>`,
-          items,
-          "",
-          `💰 <b>Jami:</b> ${Number(order.total).toLocaleString()} so'm`,
-          `📊 <b>Holat:</b> ${STATUS_LABELS[nextStatus]}`,
-          `🕐 <b>Vaqt:</b> ${new Date(order.created_at).toLocaleString("uz-UZ")}`,
-        ].filter(Boolean).join("\n");
-
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/editMessageText`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: cb.message.chat.id,
-            message_id: cb.message.message_id,
-            text: updatedText,
-            parse_mode: "HTML",
-            reply_markup: buildKeyboard(orderId, nextStatus),
-          }),
-        });
-
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ callback_query_id: cb.id, text: `Status: ${STATUS_LABELS[nextStatus]}` }),
-        });
+        await editTelegramMessage(
+          cb.message.chat.id,
+          cb.message.message_id,
+          buildOrderText(updated),
+          buildKeyboard(orderId, next),
+        );
+        await answerCallback(cb.id, `Status: ${STATUS_LABELS[next] ?? next}`);
+        return new Response("ok");
       }
 
       if (action === "cancel") {
-        await supabase.from("orders").update({ status: "cancelled" }).eq("id", orderId);
-        const { data: order } = await supabase.from("orders").select("*").eq("id", orderId).single();
+        const { data: updated, error: updErr } = await supabase
+          .from("orders")
+          .update({ status: "cancelled" })
+          .eq("id", orderId)
+          .select("*")
+          .maybeSingle();
 
-        const items = Array.isArray(order.items)
-          ? order.items.map((i: any) => `  • ${i.name} x${i.quantity} — ${i.price?.toLocaleString()} so'm`).join("\n")
-          : JSON.stringify(order.items);
+        if (updErr || !updated) {
+          console.error("cancel update error:", updErr);
+          await answerCallback(cb.id, "Xatolik yuz berdi");
+          return new Response("ok");
+        }
 
-        const cancelledText = [
-          `🛍 <b>BUYURTMA #${order.id.slice(0, 8).toUpperCase()}</b>`,
-          "",
-          `👤 <b>Mijoz:</b> ${order.full_name}`,
-          `📞 <b>Telefon:</b> ${order.phone}`,
-          `📍 <b>Manzil:</b> ${order.address}`,
-          order.note ? `📝 <b>Izoh:</b> ${order.note}` : null,
-          "",
-          `🧾 <b>Mahsulotlar:</b>`,
-          items,
-          "",
-          `💰 <b>Jami:</b> ${Number(order.total).toLocaleString()} so'm`,
-          `📊 <b>Holat:</b> ❌ Bekor qilingan`,
-          `🕐 <b>Vaqt:</b> ${new Date(order.created_at).toLocaleString("uz-UZ")}`,
-        ].filter(Boolean).join("\n");
-
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/editMessageText`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: cb.message.chat.id,
-            message_id: cb.message.message_id,
-            text: cancelledText,
-            parse_mode: "HTML",
-            reply_markup: { inline_keyboard: [] },
-          }),
-        });
-
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ callback_query_id: cb.id, text: "Buyurtma bekor qilindi" }),
-        });
+        await editTelegramMessage(
+          cb.message.chat.id,
+          cb.message.message_id,
+          buildOrderText(updated),
+          { inline_keyboard: [] },
+        );
+        await answerCallback(cb.id, "Buyurtma bekor qilindi");
+        return new Response("ok");
       }
 
+      await answerCallback(cb.id, "Noma'lum amal");
       return new Response("ok");
     }
 
-    const { record } = body;
+    // ---------- 2) Supabase Database Webhook (yangi buyurtma) ----------
+    // Supabase webhook payload: { type, table, record, schema, old_record }
+    const record = body?.record ?? body?.new ?? null;
     if (!record) {
-      console.log("No record in body");
+      console.log("No record in body. Keys:", Object.keys(body ?? {}));
       return new Response("no record", { status: 400 });
     }
 
-    console.log("New order:", record.id);
-
-    const items = Array.isArray(record.items)
-      ? record.items.map((i: any) => `  • ${i.name} x${i.quantity} — ${i.price?.toLocaleString()} so'm`).join("\n")
-      : JSON.stringify(record.items);
-
-    const text = [
-      `🆕 <b>YANGI BUYURTMA #${record.id.slice(0, 8).toUpperCase()}</b>`,
-      "",
-      `👤 <b>Mijoz:</b> ${record.full_name}`,
-      `📞 <b>Telefon:</b> ${record.phone}`,
-      `📍 <b>Manzil:</b> ${record.address}`,
-      record.note ? `📝 <b>Izoh:</b> ${record.note}` : null,
-      "",
-      `🧾 <b>Mahsulotlar:</b>`,
-      items,
-      "",
-      `💰 <b>Jami:</b> ${Number(record.total).toLocaleString()} so'm`,
-      `📊 <b>Holat:</b> ${STATUS_LABELS[record.status] || record.status}`,
-      `🕐 <b>Vaqt:</b> ${new Date(record.created_at).toLocaleString("uz-UZ")}`,
-    ].filter(Boolean).join("\n");
-
+    const text = buildOrderText(record, { isNew: true });
     await sendTelegram(text, buildKeyboard(record.id, record.status));
 
     return new Response(JSON.stringify({ ok: true }), {
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
-    console.error("Error:", String(err));
+    console.error("notify-telegram error:", String(err));
     return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
   }
 });

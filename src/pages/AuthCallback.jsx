@@ -27,7 +27,10 @@ export default function AuthCallback() {
 
     const errMsg = oauthErrorFromUrl()
     if (errMsg) {
-      toast.error(decodeURIComponent(errMsg.replace(/\+/g, ' ')))
+      // OAuth provider'dan kelgan texnik matnni foydalanuvchiga ko'rsatmaymiz;
+      // u faqat developer console'da diagnostika uchun qoladi.
+      try { console.warn('[AuthCallback] OAuth error:', decodeURIComponent(errMsg.replace(/\+/g, ' '))) } catch {}
+      toast.error(t('error'))
       navigate('/login', { replace: true })
       return
     }

@@ -89,13 +89,16 @@ export default function EditProfile() {
         if (!ALLOWED_AVATAR_MIME.includes(mime)) {
           throw new Error(t('avatarTypeInvalid') || 'Yaroqsiz rasm formati')
         }
-        const path = `avatars/${user.id}.${ext}`
+        // Birinchi papka — auth.uid(); storage RLS shu papka bo'yicha
+        // tekshiradi (avatars bucket policy ga qarang).
+        const path = `${user.id}/avatar.${ext}`
         const { error: uploadError } = await supabase.storage
           .from('avatars')
           .upload(path, avatarFile, { upsert: true, contentType: mime })
         if (uploadError) throw uploadError
         const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path)
-        avatar_url = urlData.publicUrl
+        // Cache buster — eski rasm ko'rinib qolmasligi uchun
+        avatar_url = `${urlData.publicUrl}?v=${Date.now()}`
       }
 
       const profileData = {
@@ -130,7 +133,21 @@ export default function EditProfile() {
       navigate('/profile')
     } catch (err) {
       console.error('Save error:', err)
-      toast.error(err.message || t('error'))
+      const raw = String(err?.message || '').toLowerCase()
+      if (err?.message === t('avatarTypeInvalid')) {
+        toast.error(err.message)
+      } else if (raw.includes('row-level security') || raw.includes('rls') || raw.includes('unauthorized') || raw.includes('not authorized')) {
+        // Eng ko'p uchraydigan sabab: avatars bucket RLS policy yo'q.
+        toast.error('Avatar yuklash uchun ruxsat yo\'q. Supabase migratsiyalarini yangilang.')
+      } else if (raw.includes('payload too large') || raw.includes('exceeded') || raw.includes('file size')) {
+        toast.error('Rasm hajmi 2MB dan oshmasin')
+      } else if (raw.includes('mime') || raw.includes('content type') || raw.includes('invalid type')) {
+        toast.error(t('avatarTypeInvalid') || 'Yaroqsiz rasm formati')
+      } else if (err?.message) {
+        toast.error(err.message)
+      } else {
+        toast.error(t('error'))
+      }
     } finally {
       setSaving(false)
     }

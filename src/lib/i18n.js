@@ -15,6 +15,8 @@ export const translations = {
     sale:        'Chegirmadagi',
     bestseller:  "Eng ko'p sotiladiganlar",
     searchPlaceholder: 'Mahsulot qidirish...',
+    searchResults: 'Qidiruv natijalari',
+    similarProducts: "O'xshash mahsulotlar",
     allCategories: 'Barchasi',
     noProducts:  'Mahsulot topilmadi',
     productNotAvailable: "Mahsulot mavjud emas (tugagan)",
@@ -205,6 +207,7 @@ export const translations = {
     expiryInvalid:   "Amal qilish muddati noto'g'ri",
     cvcInvalid:      "CVC 3 yoki 4 raqam bo'lishi kerak",
     passwordInvalid: "Parol 4 raqam bo'lishi kerak",
+    cardSaveUnavailable: "Karta qo'shish vaqtincha ishlamaydi. UzCard, Humo, Visa va Mastercard bilan shartnomalar jarayonda.",
     // Product detail
     addToCart:      "Savatga qo'shish",
     gift:           "Sovg'a",
@@ -222,6 +225,9 @@ export const translations = {
     giftStep3:       "Sovg'a yetkazib beriladi",
     copyLink:        'Linkni nusxalash',
     sendBtn:         'Yuborish',
+    shareVia:        "Qaysi ilova orqali yuborasiz?",
+    shareMore:       'Boshqa',
+    shareNotSupported: "Bu brauzer ulashishni qo'llab-quvvatlamaydi — linkni nusxalang.",
     giftForYouTitle: "Sizga sovg'a! 🎁",
     giftShareText:   "— sizga sovg'a! Manzilni kiriting va qabul qiling.",
     sentGifts:       "Yuborilgan sovg'alar",
@@ -416,6 +422,8 @@ export const translations = {
     sale:        'Распродажа',
     bestseller:  'Хиты продаж',
     searchPlaceholder: 'Поиск товаров...',
+    searchResults: 'Результаты поиска',
+    similarProducts: 'Похожие товары',
     allCategories: 'Все',
     noProducts:  'Товары не найдены',
     productNotAvailable: 'Товар недоступен (продано)',
@@ -599,6 +607,7 @@ export const translations = {
     expiryInvalid:   'Неверный срок действия',
     cvcInvalid:      'CVC должен быть 3 или 4 цифры',
     passwordInvalid: 'Пароль должен быть 4 цифры',
+    cardSaveUnavailable: 'Добавление карты временно недоступно. Идёт оформление договоров с UzCard, Humo, Visa и Mastercard.',
     addToCart:      'В корзину',
     gift:           'Подарок',
     giftCreateTitle: '🎁 Создать подарок',
@@ -615,6 +624,9 @@ export const translations = {
     giftStep3:       'Подарок будет доставлен',
     copyLink:        'Копировать ссылку',
     sendBtn:         'Отправить',
+    shareVia:        'Через какое приложение отправить?',
+    shareMore:       'Ещё',
+    shareNotSupported: 'Этот браузер не поддерживает шаринг — скопируйте ссылку.',
     giftForYouTitle: 'Подарок для вас! 🎁',
     giftShareText:   '— подарок для вас! Введите адрес и получите.',
     sentGifts:       'Отправленные подарки',
@@ -806,6 +818,8 @@ export const translations = {
     sale:        'On Sale',
     bestseller:  'Bestsellers',
     searchPlaceholder: 'Search products...',
+    searchResults: 'Search results',
+    similarProducts: 'Similar products',
     allCategories: 'All',
     noProducts:  'No products found',
     productNotAvailable: 'Product not available (sold out)',
@@ -989,6 +1003,7 @@ export const translations = {
     expiryInvalid:   'Invalid expiry date',
     cvcInvalid:      'CVC must be 3 or 4 digits',
     passwordInvalid: 'Password must be 4 digits',
+    cardSaveUnavailable: 'Adding a card is temporarily unavailable. Agreements with UzCard, Humo, Visa and Mastercard are being finalized.',
     addToCart:      'Add to Cart',
     gift:           'Gift',
     giftCreateTitle: '🎁 Create gift',
@@ -1005,6 +1020,9 @@ export const translations = {
     giftStep3:       'Gift will be delivered',
     copyLink:        'Copy link',
     sendBtn:         'Send',
+    shareVia:        'Share via',
+    shareMore:       'More',
+    shareNotSupported: 'This browser does not support sharing — copy the link instead.',
     giftForYouTitle: 'Gift for you! 🎁',
     giftShareText:   '— gift for you! Enter your address and receive it.',
     sentGifts:       'Sent gifts',
@@ -1240,4 +1258,38 @@ export const REGION_NAMES = {
     "Sirdaryo": "Syrdarya",
     "Qoraqalpog'iston": "Karakalpakstan",
   },
+}
+
+// ── Variant turi (color/size/...) yorliqlari, tilga qarab ─────────
+// VariantSelector va ProductDetail'dagi ogohlantirish matni shu yerdan oladi.
+export const variantTypeLabels = {
+  uz: { color: 'Rang',  size: "O'lcham", volume: 'Hajm',   weight: "Og'irlik", other: 'Tur'  },
+  ru: { color: 'Цвет',  size: 'Размер',  volume: 'Объём',  weight: 'Вес',      other: 'Тип'  },
+  en: { color: 'Color', size: 'Size',    volume: 'Volume', weight: 'Weight',   other: 'Type' },
+}
+
+export function getVariantTypeLabel(type, lang = 'uz') {
+  return variantTypeLabels[lang]?.[type] || variantTypeLabels.uz[type] || type
+}
+
+// Tanlanmagan variant turlari uchun ogohlantirish matnini tuzadi.
+// Misol: uz → "Rang va O'lchamni tanlang"
+//        ru → "Выберите: Цвет, Размер"
+//        en → "Please select: Color, Size"
+export function formatMissingVariantsMessage(missingTypes, lang = 'uz') {
+  const labels = (missingTypes || [])
+    .map(type => getVariantTypeLabel(type, lang))
+    .filter(Boolean)
+  if (labels.length === 0) {
+    return translations[lang]?.selectVariants || translations.uz.selectVariants
+  }
+  if (lang === 'uz') {
+    // Uzbek "ni" qo'shimchasi faqat oxirgi so'zga qo'shiladi (akkusativ holat).
+    if (labels.length === 1) return `${labels[0]}ni tanlang`
+    const head = labels.slice(0, -1).join(', ')
+    const last = labels[labels.length - 1]
+    return `${head} va ${last}ni tanlang`
+  }
+  if (lang === 'ru') return `Выберите: ${labels.join(', ')}`
+  return `Please select: ${labels.join(', ')}`
 }
