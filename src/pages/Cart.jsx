@@ -631,9 +631,54 @@ export default function Cart() {
       return data || []
     },
     enabled: productIds.length > 0,
+    // Admin tomonidan narx o'zgartirilsa, cart sahifasida darhol ko'rinishi uchun.
+    staleTime: 5_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
   const productMap = Object.fromEntries(products.map(p => [p.id, p]))
   const cartPricingReady = productIds.length === 0 || (!cartProductsPending && !cartProductsError)
+
+  // Joriy mahsulot narxini olish (admin panel orqali o'zgartirilgan bo'lishi mumkin).
+  // DB trigger (aa_orders_recompute_total) buyurtma yozilishida products.price/sale_price
+  // dan foydalanadi, shuning uchun bu yerda ham xuddi shu mantiq amal qiladi.
+  const getCurrentItemPrice = (item) => {
+    if (!item?.product_id) return Number(item?.price ?? 0)
+    const p = productMap[item.product_id]
+    if (!p) return Number(item?.price ?? 0)
+    const base = Number(p.price ?? 0)
+    const sale = p.sale_price != null ? Number(p.sale_price) : null
+    return sale != null && sale < base ? sale : base
+  }
+
+  // Cart_items.price ni joriy narxga avtomatik sinxronlash — shunda boshqa sahifalarda ham
+  // (Topbar mini-cart, ProductDetail.jsx) bir xil narx ko'rinadi.
+  const priceSyncedRef = useRef(new Set())
+  useEffect(() => {
+    if (!user?.id || cartItems.length === 0 || products.length === 0) return
+    const updates = []
+    for (const item of cartItems) {
+      if (!item.product_id) continue
+      const current = getCurrentItemPrice(item)
+      if (!Number.isFinite(current) || current <= 0) continue
+      if (Math.abs(current - Number(item.price)) < 0.5) continue
+      const key = `${item.id}:${current}`
+      if (priceSyncedRef.current.has(key)) continue
+      priceSyncedRef.current.add(key)
+      updates.push(
+        supabase.from('cart_items')
+          .update({ price: current })
+          .eq('id', item.id)
+          .eq('user_id', user.id),
+      )
+    }
+    if (updates.length > 0) {
+      Promise.all(updates).then(() => {
+        queryClient.invalidateQueries({ queryKey: cartItemsQueryKey(user?.id) })
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartItems, products, user?.id])
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, quantity }) => {
@@ -711,10 +756,18 @@ export default function Cart() {
   }
   const selectAll = () => setSelectedIds(null)
   const deselectAll = () => setSelectedIds(new Set())
-  const selectedItems = !selectedIds ? cartItems : cartItems.filter(i => selectedIds.has(i.id))
+  // cart_items dagi narxni joriy products narxi bilan almashtirib derived array yaratamiz.
+  // OrderForm va ro'yxat ko'rinishi shu yangilangan narxlardan foydalanadi.
+  const cartItemsWithCurrentPrice = cartItems.map((i) => ({
+    ...i,
+    price: getCurrentItemPrice(i),
+  }))
+  const selectedItems = !selectedIds
+    ? cartItemsWithCurrentPrice
+    : cartItemsWithCurrentPrice.filter(i => selectedIds.has(i.id))
   const isSelected = (id) => !selectedIds || selectedIds.has(id)
 
-  const subtotal = selectedItems.reduce((s, i) => s + i.price * i.quantity, 0)
+  const subtotal = selectedItems.reduce((s, i) => s + Number(i.price) * Number(i.quantity), 0)
 
   // Yetkazib berish narxi sozlamalari — admin panel orqali boshqariladi.
   // Server (DB trigger) yakuniy hisobni shu jadvaldan o'qib amalga oshiradi.
@@ -821,12 +874,14 @@ export default function Cart() {
                 {t('deselectAll')}
               </button>
             </div>
-            {cartItems.map((item, i) => {
+            {cartItemsWithCurrentPrice.map((item, i) => {
               const stockCap =
                 item.product_id && productMap[item.product_id] != null
                   ? Number(productMap[item.product_id].stock_quantity ?? 0)
                   : null
               const atStockMax = stockCap != null && item.quantity >= stockCap
+              const storedPrice = Number(cartItems.find(ci => ci.id === item.id)?.price ?? item.price)
+              const priceChanged = Math.abs(storedPrice - Number(item.price)) > 0.5
               return (
               <motion.div key={item.id}
                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}
@@ -918,9 +973,21 @@ export default function Cart() {
                     <p className="text-sm font-semibold text-foreground truncate">{item.product_name}</p>
                   )}
                   <p className="text-sm text-primary font-bold mt-0.5">
-                    {(item.price * item.quantity).toLocaleString()} so'm
+                    {(Number(item.price) * Number(item.quantity)).toLocaleString()} so'm
+                    {priceChanged && (
+                      <span className="ml-1 text-[10px] text-muted-foreground line-through font-normal">
+                        {(storedPrice * Number(item.quantity)).toLocaleString()}
+                      </span>
+                    )}
                   </p>
-                  <p className="text-xs text-muted-foreground">{item.price.toLocaleString()} × {item.quantity}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {Number(item.price).toLocaleString()} × {item.quantity}
+                    {priceChanged && (
+                      <span className="ml-1 text-[10px] text-amber-600 font-semibold">
+                        narx yangilandi
+                      </span>
+                    )}
+                  </p>
                   <div className="flex items-center gap-2 mt-2">
                     <button type="button" onClick={e => { e.stopPropagation(); item.quantity > 1
                       ? updateMutation.mutate({ id: item.id, quantity: item.quantity - 1 })
