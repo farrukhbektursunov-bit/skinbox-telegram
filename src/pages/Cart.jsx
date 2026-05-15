@@ -48,7 +48,7 @@ function OrderForm({ cartItems, subtotal, saleDiscount, productMap, onClose, onS
   const [couponCode, setCouponCode] = useState('')
   const [appliedCoupon, setAppliedCoupon] = useState(null)
   const [couponLoading, setCouponLoading] = useState(false)
-  const [payMode, setPayMode] = useState('cod')
+  const [payMode, setPayMode] = useState('click')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   // MUHIM: Cart komponentidagi `defaultAddress` query bilan to'qnashmasligi uchun
