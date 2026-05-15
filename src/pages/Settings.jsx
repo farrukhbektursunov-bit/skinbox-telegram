@@ -8,12 +8,14 @@ import { LANGUAGES } from '@/lib/i18n'
 import { supabase } from '@/api/supabase'
 import toast from 'react-hot-toast'
 import { validatePasswordStrength, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH, PW_MSG_KEYS } from '@/lib/authUtils'
+import { useShopSettings } from '@/lib/shopSettings'
 
 export default function Settings() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { lang, changeLang, t } = useLang()
   const { theme, setTheme } = useTheme()
+  const { shop_name } = useShopSettings()
   const [showPassModal, setShowPassModal] = useState(false)
 
   const THEME_OPTIONS = [
@@ -129,7 +131,7 @@ export default function Settings() {
           </div>
         </button>
 
-        <p className="text-center text-xs text-muted-foreground">SkinBox v1.0.0</p>
+        <p className="text-center text-xs text-muted-foreground">{shop_name} v1.0.0</p>
       </div>
 
       {/* Parol o'zgartirish modali */}

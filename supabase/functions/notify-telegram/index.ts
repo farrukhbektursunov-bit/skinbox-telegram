@@ -269,17 +269,78 @@ serve(async (req) => {
       return new Response("ok");
     }
 
-    // ---------- 2) Supabase Database Webhook (yangi buyurtma) ----------
+    // ---------- 2) Supabase Database Webhook (yangi buyurtma / status o'zgarishi) ----------
     // Supabase webhook payload: { type, table, record, schema, old_record }
+    // MUHIM (Click oqimi): Click bilan to'lashda buyurtma `status='awaiting_payment'`
+    // bilan INSERT qilinadi. Bu paytda mijoz hali to'lamagan — guruhga habar
+    // YUBORMASLIK kerak. Click-complete edge function to'lovni tasdiqlagach,
+    // status `awaiting_payment` → `pending` ga UPDATE bo'ladi. Habarni AYNAN shu
+    // o'tish paytida yuboramiz (yangi buyurtma sifatida).
+    //
+    // Supabase Database Webhook konfiguratsiyasida `orders` uchun INSERT VA UPDATE
+    // hodisalari yoqilgan bo'lishi kerak.
+    const eventType: string = String(body?.type ?? "").toUpperCase();
     const record = body?.record ?? body?.new ?? null;
+    const oldRecord = body?.old_record ?? body?.old ?? null;
+
     if (!record) {
       console.log("No record in body. Keys:", Object.keys(body ?? {}));
       return new Response("no record", { status: 400 });
     }
 
+    if (eventType === "INSERT") {
+      // Click — to'lov kutilmoqda. Habar yubormaymiz; to'lov muvaffaqiyatli
+      // tugagandan keyin UPDATE webhook orqali yuboriladi.
+      if (record.status === "awaiting_payment") {
+        return new Response(JSON.stringify({ ok: true, skipped: "awaiting_payment" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const text = buildOrderText(record, { isNew: true });
+      await sendTelegram(text, buildKeyboard(record.id, record.status));
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (eventType === "UPDATE") {
+      const prevStatus = oldRecord?.status;
+      const newStatus = record?.status;
+
+      // `awaiting_payment` → biror "to'langan" statusga o'tish: Click to'lovi
+      // muvaffaqiyatli yakunlanganini bildiradi. Endi guruhga "YANGI BUYURTMA"
+      // habarini yuboramiz.
+      if (
+        prevStatus === "awaiting_payment" &&
+        newStatus &&
+        newStatus !== "awaiting_payment" &&
+        newStatus !== "cancelled"
+      ) {
+        const text = buildOrderText(record, { isNew: true });
+        await sendTelegram(text, buildKeyboard(record.id, newStatus));
+        return new Response(JSON.stringify({ ok: true, sentOn: "payment-completed" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // Boshqa status o'zgarishlari uchun (admin paneldan yoki Telegram tugmalari
+      // orqali) qo'shimcha habar yubormaymiz — yagona buyurtma xabari
+      // editMessageText orqali yangilanadi.
+      return new Response(JSON.stringify({ ok: true, skipped: "update-noop" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Noma'lum yoki bo'sh event turi — fallback: agar `awaiting_payment` bo'lsa
+    // yubormaymiz, aks holda eski xulq-atvor (yangi buyurtma).
+    if (record.status === "awaiting_payment") {
+      return new Response(JSON.stringify({ ok: true, skipped: "awaiting_payment" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     const text = buildOrderText(record, { isNew: true });
     await sendTelegram(text, buildKeyboard(record.id, record.status));
-
     return new Response(JSON.stringify({ ok: true }), {
       headers: { "Content-Type": "application/json" },
     });

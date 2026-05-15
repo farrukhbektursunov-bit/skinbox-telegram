@@ -9,11 +9,13 @@ import { useLang } from '@/lib/LangContext'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/api/supabase'
 import toast from 'react-hot-toast'
+import { useShopSettings } from '@/lib/shopSettings'
 
 export default function Profile() {
   const { user, signOut } = useAuth()
   const { t } = useLang()
   const navigate = useNavigate()
+  const { shop_name } = useShopSettings()
 
   const { data: profile } = useQuery({
     queryKey: ['profile', user?.id],
@@ -148,7 +150,7 @@ export default function Profile() {
           <span className="flex-1 text-left text-sm font-medium text-destructive">{t('logout')}</span>
         </button>
 
-        <p className="text-center text-xs text-muted-foreground pt-1">SkinBox v1.0.0</p>
+        <p className="text-center text-xs text-muted-foreground pt-1">{shop_name} v1.0.0</p>
       </div>
     </div>
   )

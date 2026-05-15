@@ -10,8 +10,10 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { UZ_DELIVERY_REGIONS as REGIONS } from '@/lib/uzRegions'
+import { useShopSettings } from '@/lib/shopSettings'
 
 export default function ClaimGift() {
+  const { shop_name } = useShopSettings()
   const { token: rawToken } = useParams()
   // Token URL dan kelganida ortiqcha bo'sh joy yoki yangi qator belgisi bo'lmasligi kerak,
   // lekin ehtiyot uchun trim qilamiz.
@@ -171,7 +173,7 @@ export default function ClaimGift() {
             className="flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white rounded-xl text-sm font-semibold"
           >
             <ShoppingBag className="w-4 h-4" />
-            SkinBox do'koniga kirish
+            {shop_name} do'koniga kirish
           </button>
         </motion.div>
       </div>
@@ -189,7 +191,7 @@ export default function ClaimGift() {
             <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center">
               <ShoppingBag className="w-5 h-5 text-white" />
             </div>
-            <span className="text-xl font-extrabold text-foreground">SkinBox</span>
+            <span className="text-xl font-extrabold text-foreground">{shop_name}</span>
           </div>
 
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>

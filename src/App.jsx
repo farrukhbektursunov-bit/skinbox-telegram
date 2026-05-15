@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
@@ -5,6 +6,7 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext'
 import { LangProvider } from '@/lib/LangContext'
 import { ThemeProvider } from '@/lib/ThemeContext'
 import { queryClient } from '@/lib/queryClient'
+import { useShopSettings } from '@/lib/shopSettings'
 import AppLayout from '@/components/shop/AppLayout'
 import Shop from '@/pages/Shop'
 import Categories from '@/pages/Categories'
@@ -65,6 +67,14 @@ function ProtectedRoutes() {
   )
 }
 
+function ShopTitleSync() {
+  const { shop_name } = useShopSettings()
+  useEffect(() => {
+    if (shop_name) document.title = shop_name
+  }, [shop_name])
+  return null
+}
+
 function OnboardingGate({ children }) {
   const location = useLocation()
   const completed = localStorage.getItem('onboardingCompleted') === 'true'
@@ -87,6 +97,7 @@ export default function App() {
         <AuthProvider>
           <QueryClientProvider client={queryClient}>
             <BrowserRouter>
+              <ShopTitleSync />
               <OnboardingGate>
                 <Routes>
                   <Route path="/claim-gift/:token" element={<ClaimGift />} />

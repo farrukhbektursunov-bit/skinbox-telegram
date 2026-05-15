@@ -16,6 +16,7 @@ import {
   getAuthConnectionErrorMessageKey,
 } from '@/lib/authUtils'
 import { getSupabaseEnvIssue } from '@/lib/supabaseEnv'
+import { useShopSettings } from '@/lib/shopSettings'
 
 function GoogleIcon({ className }) {
   return (
@@ -362,6 +363,7 @@ function EmailForm({ isSignUp, onBack, onGoogle, googleLoading }) {
 export default function Login() {
   const { user } = useAuth()
   const { t } = useLang()
+  const { shop_name } = useShopSettings()
   const [method, setMethod]   = useState('email') // null | 'email' — boshida email/parol formasi
   const [isSignUp, setIsSignUp] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
@@ -401,7 +403,7 @@ export default function Login() {
           <div className="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mb-4 shadow-lg shadow-primary/20">
             <ShoppingBag className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-extrabold text-foreground">SkinBox</h1>
+          <h1 className="text-2xl font-extrabold text-foreground">{shop_name}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t('shopTagline')}</p>
         </div>
 

@@ -1,8 +1,10 @@
 import { useNavigate } from 'react-router-dom'
 import { ShoppingBag, ChevronLeft } from 'lucide-react'
+import { useShopSettings } from '@/lib/shopSettings'
 
 export default function Header({ title, showBack, backTo = '/shop', noSticky }) {
   const navigate = useNavigate()
+  const { shop_name } = useShopSettings()
   const stickyClass = noSticky ? '' : 'sticky top-0 z-40'
 
   if (title && showBack) {
@@ -22,7 +24,7 @@ export default function Header({ title, showBack, backTo = '/shop', noSticky }) 
       <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
         <ShoppingBag className="w-4 h-4 text-white" />
       </div>
-      <span className="text-lg font-extrabold tracking-tight text-foreground">SkinBox</span>
+      <span className="text-lg font-extrabold tracking-tight text-foreground">{shop_name}</span>
     </div>
   )
 }
