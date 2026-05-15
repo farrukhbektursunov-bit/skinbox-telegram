@@ -14,10 +14,43 @@ import { filterNameInput, filterPhoneInput, parsePhoneForInput, formatPhoneForSa
 import { buildClickPayUrl, isClickConfigured } from '@/lib/clickPay'
 
 // #region agent log
-// Vaqtincha debug: Click oqimida har qadam — localhost log + console + toast (qisqa).
+// Vaqtincha debug: Click oqimida har qadam — localhost log + console + toast (qisqa) + ekran overlay.
 // Sessiya 58347f — diagnostika tugagach olib tashlanadi.
 const __DBG_ENDPOINT = 'http://127.0.0.1:7729/ingest/5faedbbe-0012-4cc2-aeed-9c5d055b8eb0'
 const __DBG_SID = '58347f'
+function __dbgRenderOverlay() {
+  try {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
+    let el = document.getElementById('__skinbox_dbg_overlay__')
+    if (!el) {
+      el = document.createElement('div')
+      el.id = '__skinbox_dbg_overlay__'
+      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;max-height:55vh;overflow:auto;background:rgba(0,0,0,0.92);color:#0f0;font:11px/1.35 ui-monospace,monospace;padding:8px 10px 12px;z-index:2147483647;white-space:pre-wrap;word-break:break-word;border-top:2px solid #0f0;'
+      const close = document.createElement('button')
+      close.textContent = '×'
+      close.style.cssText = 'position:absolute;top:2px;right:6px;background:transparent;color:#fff;border:0;font-size:18px;cursor:pointer'
+      close.onclick = () => el && (el.style.display = 'none')
+      el.appendChild(close)
+      const copy = document.createElement('button')
+      copy.textContent = 'copy'
+      copy.style.cssText = 'position:absolute;top:2px;right:30px;background:transparent;color:#9cf;border:1px solid #9cf;font-size:10px;padding:0 6px;cursor:pointer'
+      copy.onclick = () => {
+        try { navigator.clipboard.writeText(JSON.stringify(window.__skinboxDbg || [], null, 2)) } catch {}
+      }
+      el.appendChild(copy)
+      document.body.appendChild(el)
+    }
+    const logs = (window.__skinboxDbg || []).slice(-12)
+    const body = logs.map((l) => {
+      const time = new Date(l.timestamp).toLocaleTimeString()
+      return `[${time}] ${l.location}\n  ${l.message}\n  ${JSON.stringify(l.data)}`
+    }).join('\n\n')
+    let content = el.querySelector('pre')
+    if (!content) { content = document.createElement('pre'); content.style.cssText = 'margin:0;color:#cfc'; el.appendChild(content) }
+    content.textContent = body
+    el.style.display = 'block'
+  } catch {}
+}
 function __dbg(location, message, data) {
   const payload = { sessionId: __DBG_SID, location, message, data, timestamp: Date.now() }
   try { console.log('[skinbox-dbg]', location, message, data) } catch {}
@@ -35,6 +68,7 @@ function __dbg(location, message, data) {
       window.__skinboxDbg.push(payload)
     }
   } catch {}
+  __dbgRenderOverlay()
 }
 // #endregion
 
