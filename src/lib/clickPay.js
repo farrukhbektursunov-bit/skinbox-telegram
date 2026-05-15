@@ -26,6 +26,32 @@ export function isClickConfigured() {
  */
 export function buildClickPayUrl({ amountSoum, merchantTransId, returnUrl, cardType }) {
   const { merchantId, serviceId, merchantUserId } = getClickPublicConfig()
+  // #region agent log
+  try {
+    fetch('http://127.0.0.1:7729/ingest/5faedbbe-0012-4cc2-aeed-9c5d055b8eb0', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '58347f' },
+      body: JSON.stringify({
+        sessionId: '58347f',
+        location: 'clickPay.js:buildClickPayUrl',
+        message: 'env snapshot at build url time',
+        data: {
+          hypothesisId: 'H3,H5',
+          hasMerchantId: !!merchantId,
+          hasServiceId: !!serviceId,
+          hasMerchantUserId: !!merchantUserId,
+          merchantIdLen: String(merchantId || '').length,
+          serviceIdLen: String(serviceId || '').length,
+          amountInput: amountSoum,
+          merchantTransIdSample: String(merchantTransId || '').slice(0, 16),
+          hasReturnUrl: !!returnUrl,
+        },
+        timestamp: Date.now(),
+      }),
+      keepalive: true,
+    }).catch(() => {})
+  } catch {}
+  // #endregion
   if (!merchantId || !serviceId || !merchantUserId) {
     throw new Error('Click: VITE_CLICK_MERCHANT_ID / SERVICE_ID / MERCHANT_USER_ID sozlanmagan')
   }

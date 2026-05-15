@@ -13,6 +13,31 @@ import toast from 'react-hot-toast'
 import { filterNameInput, filterPhoneInput, parsePhoneForInput, formatPhoneForSave, PHONE_PREFIX } from '@/lib/authUtils'
 import { buildClickPayUrl, isClickConfigured } from '@/lib/clickPay'
 
+// #region agent log
+// Vaqtincha debug: Click oqimida har qadam — localhost log + console + toast (qisqa).
+// Sessiya 58347f — diagnostika tugagach olib tashlanadi.
+const __DBG_ENDPOINT = 'http://127.0.0.1:7729/ingest/5faedbbe-0012-4cc2-aeed-9c5d055b8eb0'
+const __DBG_SID = '58347f'
+function __dbg(location, message, data) {
+  const payload = { sessionId: __DBG_SID, location, message, data, timestamp: Date.now() }
+  try { console.log('[skinbox-dbg]', location, message, data) } catch {}
+  try {
+    fetch(__DBG_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': __DBG_SID },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {})
+  } catch {}
+  try {
+    if (typeof window !== 'undefined') {
+      window.__skinboxDbg = window.__skinboxDbg || []
+      window.__skinboxDbg.push(payload)
+    }
+  } catch {}
+}
+// #endregion
+
 const INPUT = "w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all"
 
 /** PostgREST / Postgres xatosi — barcha matnni bir joyda (pattern va fallback uchun) */
@@ -224,13 +249,41 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       }
     }
 
+    // #region agent log
+    __dbg('Cart.jsx:handleSubmit:entry', 'pay button pressed', {
+      hypothesisId: 'H1,H2,H3,H4,H5',
+      payMode,
+      total,
+      subtotal,
+      cartItemsCount: cartItems.length,
+      hasCouponDiscount: !!appliedCoupon,
+      origin: typeof window !== 'undefined' ? window.location.origin : null,
+      hostname: typeof window !== 'undefined' ? window.location.hostname : null,
+    })
+    // #endregion
+
     if (payMode === 'click' && !isClickConfigured()) {
-      toast.error(t('clickNotConfigured'))
+      // #region agent log
+      __dbg('Cart.jsx:handleSubmit:isClickConfigured=false', 'env missing', {
+        hypothesisId: 'H3,H5',
+        envSnapshot: {
+          merchantId: import.meta.env.VITE_CLICK_MERCHANT_ID || '(empty)',
+          serviceId: import.meta.env.VITE_CLICK_SERVICE_ID || '(empty)',
+          merchantUserId: import.meta.env.VITE_CLICK_MERCHANT_USER_ID || '(empty)',
+        },
+      })
+      toast.error(t('clickNotConfigured') + ' [DBG:H3]')
+      // #endregion
       return
     }
 
     if (payMode === 'click' && total <= 0) {
-      toast.error(t('clickRequiresPositiveTotal'))
+      // #region agent log
+      __dbg('Cart.jsx:handleSubmit:clientTotalNonPositive', 'preview total <= 0', {
+        hypothesisId: 'H2', total, subtotal,
+      })
+      toast.error(t('clickRequiresPositiveTotal') + ' [DBG:client-total]')
+      // #endregion
       return
     }
 
@@ -245,6 +298,20 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       // MUHIM: `total`, `subtotal`, `shipping_cost`, `discount_total` va `items[].price`
       // server tomonida BEFORE INSERT trigger (`aa_orders_recompute_total`) tomonidan qayta hisoblanadi.
       // Klient yuborgan narxlar e'tiborga olinmaydi — DB dan o'qiladi.
+      // #region agent log
+      __dbg('Cart.jsx:beforeInsert', 'about to call supabase.from(orders).insert', {
+        hypothesisId: 'H1,H2',
+        orderStatus,
+        payMode,
+        appliedCouponCode: appliedCoupon?.code || null,
+        itemsCount: cartItems.length,
+        itemSample: cartItems[0] ? {
+          product_id: cartItems[0].product_id,
+          quantity: cartItems[0].quantity,
+          hasName: !!cartItems[0].product_name,
+        } : null,
+      })
+      // #endregion
       const { data: insertedRows, error } = await supabase.from('orders').insert({
         user_id: user.id,
         items: cartItems.map(i => ({
@@ -256,6 +323,20 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
         full_name: form.full_name, phone: formatPhoneForSave(form.phone),
         address: buildOrderAddress(), note: buildOrderNote(),
       }).select('id, total')
+      // #region agent log
+      __dbg('Cart.jsx:afterInsert', 'insert returned', {
+        hypothesisId: 'H1,H2',
+        hasError: !!error,
+        errorCode: error?.code || null,
+        errorMessage: (error?.message || '').slice(0, 240),
+        errorDetails: (error?.details || '').slice(0, 240),
+        errorHint: (error?.hint || '').slice(0, 240),
+        insertedRows: Array.isArray(insertedRows) ? insertedRows.map(r => ({ id: r?.id ? String(r.id).slice(0, 8) + '…' : null, total: r?.total })) : insertedRows,
+      })
+      if (error) {
+        toast.error('[DBG:H1] ' + (error.code || '') + ' ' + ((error.message || '').slice(0, 80)))
+      }
+      // #endregion
       if (error) throw error
       const inserted = Array.isArray(insertedRows) ? insertedRows[0] : null
       if (!inserted?.id) {
@@ -271,17 +352,53 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       if (payMode === 'click') {
         // Click uchun summa server qaytargan `total` dan olinadi (klient hisob-kitobi emas).
         const serverTotal = Number(inserted.total)
+        // #region agent log
+        __dbg('Cart.jsx:click:serverTotal', 'server returned total', {
+          hypothesisId: 'H2',
+          rawTotal: inserted.total,
+          typeofRawTotal: typeof inserted.total,
+          serverTotalNumber: serverTotal,
+          isFinite: Number.isFinite(serverTotal),
+          insertedId: inserted.id ? String(inserted.id).slice(0, 8) + '…' : null,
+        })
+        // #endregion
         if (!Number.isFinite(serverTotal) || serverTotal <= 0) {
-          toast.error(t('clickRequiresPositiveTotal'))
+          // #region agent log
+          toast.error(t('clickRequiresPositiveTotal') + ' [DBG:H2:server-total=' + String(inserted.total) + ']')
+          // #endregion
           return
         }
-        const returnUrl = `${window.location.origin}/payment/click-return?order_id=${encodeURIComponent(inserted.id)}`
-        const payUrl = buildClickPayUrl({
-          amountSoum: serverTotal,
-          merchantTransId: inserted.id,
-          returnUrl,
-        })
-        window.location.assign(payUrl)
+        try {
+          const returnUrl = `${window.location.origin}/payment/click-return?order_id=${encodeURIComponent(inserted.id)}`
+          const payUrl = buildClickPayUrl({
+            amountSoum: serverTotal,
+            merchantTransId: inserted.id,
+            returnUrl,
+          })
+          // #region agent log
+          __dbg('Cart.jsx:click:builtPayUrl', 'payUrl ready, about to assign', {
+            hypothesisId: 'H3,H4',
+            payUrlHost: (() => { try { return new URL(payUrl).host } catch { return null } })(),
+            payUrlLength: payUrl.length,
+            amountSent: serverTotal,
+          })
+          // #endregion
+          window.location.assign(payUrl)
+          // #region agent log
+          __dbg('Cart.jsx:click:afterAssign', 'assign returned (navigation may be blocked)', {
+            hypothesisId: 'H4',
+            stillOnSameOrigin: typeof window !== 'undefined' ? window.location.origin : null,
+          })
+          // #endregion
+        } catch (e) {
+          // #region agent log
+          __dbg('Cart.jsx:click:buildOrAssignError', 'error building/assigning click url', {
+            hypothesisId: 'H3,H4',
+            errMessage: (e?.message || String(e)).slice(0, 240),
+          })
+          toast.error('[DBG:H3] ' + ((e?.message || String(e)).slice(0, 100)))
+          // #endregion
+        }
         return
       }
 
