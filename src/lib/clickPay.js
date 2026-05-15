@@ -4,11 +4,15 @@
  */
 const PAY_BASE = 'https://my.click.uz/services/pay'
 
+// Vercel/CI dan yopishgan yangi qator va probel belgilarini olib tashlash.
+// (Aks holda URL ga `%0A` kirib qoladi va Click "Ошибка" qaytaradi.)
+const cleanEnv = (v) => String(v ?? '').replace(/[\s\u00A0]+/g, '').trim()
+
 export function getClickPublicConfig() {
   return {
-    merchantId: import.meta.env.VITE_CLICK_MERCHANT_ID || '',
-    serviceId: import.meta.env.VITE_CLICK_SERVICE_ID || '',
-    merchantUserId: import.meta.env.VITE_CLICK_MERCHANT_USER_ID || '',
+    merchantId: cleanEnv(import.meta.env.VITE_CLICK_MERCHANT_ID),
+    serviceId: cleanEnv(import.meta.env.VITE_CLICK_SERVICE_ID),
+    merchantUserId: cleanEnv(import.meta.env.VITE_CLICK_MERCHANT_USER_ID),
   }
 }
 
