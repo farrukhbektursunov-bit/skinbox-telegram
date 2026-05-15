@@ -82,8 +82,11 @@ export default function Shop() {
   const saleProducts = baseForRows.filter(p =>
     p.sale_price != null && Number(p.sale_price) < Number(p.price || Infinity)
   )
-  const bestsellerProducts = [...baseForRows]
-    .sort((a, b) => (b.sold_count || 0) - (a.sold_count || 0))
+  // "Eng ko'p sotiladiganlar" bo'limi — faqat haqiqatdan sotilgan mahsulotlar.
+  // Hech bir mahsulot sotilmagan bo'lsa (sold_count = 0 yoki null) bo'lim ko'rinmaydi.
+  const bestsellerProducts = baseForRows
+    .filter(p => Number(p.sold_count || 0) > 0)
+    .sort((a, b) => Number(b.sold_count || 0) - Number(a.sold_count || 0))
     .slice(0, 8)
 
   const pageTitle = useMemo(() => {
