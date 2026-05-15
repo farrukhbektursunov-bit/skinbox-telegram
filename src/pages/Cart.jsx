@@ -715,9 +715,41 @@ export default function Cart() {
   const isSelected = (id) => !selectedIds || selectedIds.has(id)
 
   const subtotal = selectedItems.reduce((s, i) => s + i.price * i.quantity, 0)
-  const SHIPPING_COST = 15000
-  const FREE_SHIPPING_MIN = 200000
-  const shippingCost = selectedItems.length === 0 ? 0 : (subtotal >= FREE_SHIPPING_MIN ? 0 : SHIPPING_COST)
+
+  // Yetkazib berish narxi sozlamalari — admin panel orqali boshqariladi.
+  // Server (DB trigger) yakuniy hisobni shu jadvaldan o'qib amalga oshiradi.
+  const { data: shippingSettings } = useQuery({
+    queryKey: ['appSettings', 'shipping'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('key, value')
+        .in('key', ['shipping_cost', 'free_shipping_min'])
+      if (error) {
+        console.warn('[Cart] app_settings o\'qishda xato:', error.message)
+        return null
+      }
+      const map = Object.fromEntries((data || []).map(r => [r.key, r.value]))
+      const parseNum = (v) => {
+        if (v == null) return null
+        if (typeof v === 'number' && Number.isFinite(v)) return v
+        const n = Number(v)
+        return Number.isFinite(n) ? n : null
+      }
+      return {
+        shippingCost: parseNum(map.shipping_cost),
+        freeShippingMin: parseNum(map.free_shipping_min),
+      }
+    },
+    staleTime: 5_000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+  })
+  const SHIPPING_COST = shippingSettings?.shippingCost ?? 15000
+  const FREE_SHIPPING_MIN = shippingSettings?.freeShippingMin ?? 200000
+  const shippingCost = selectedItems.length === 0
+    ? 0
+    : (FREE_SHIPPING_MIN > 0 && subtotal >= FREE_SHIPPING_MIN ? 0 : SHIPPING_COST)
 
   let saleDiscount = 0
   for (const item of selectedItems) {
