@@ -48,10 +48,24 @@ export default function EditProfile() {
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
+  const ALLOWED_AVATAR_MIME = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
+  const ALLOWED_AVATAR_EXT  = ['jpg', 'jpeg', 'png', 'webp', 'gif']
+
   const handleAvatarChange = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
     if (file.size > 2 * 1024 * 1024) { toast.error('Rasm hajmi 2MB dan oshmasin'); return }
+
+    // Server tomonida ham tekshiriladi (Supabase bucket allowed_mime_types),
+    // lekin oldindan klientda ham bartaraf etamiz.
+    const mime = (file.type || '').toLowerCase()
+    const ext  = (file.name.split('.').pop() || '').toLowerCase()
+    if (!ALLOWED_AVATAR_MIME.includes(mime) || !ALLOWED_AVATAR_EXT.includes(ext)) {
+      toast.error(t('avatarTypeInvalid') || 'Faqat tasvir (jpg/png/webp/gif) yuklang')
+      e.target.value = ''
+      return
+    }
+
     setAvatarFile(file)
     setAvatarPreview(URL.createObjectURL(file))
   }
@@ -63,10 +77,22 @@ export default function EditProfile() {
       let avatar_url = profile?.avatar_url || null
 
       if (avatarFile) {
-        const ext  = avatarFile.name.split('.').pop()
+        const mime = (avatarFile.type || '').toLowerCase()
+        const rawExt = (avatarFile.name.split('.').pop() || '').toLowerCase()
+        // Faqat ruxsat etilgan kengaytma — boshqasi normalizatsiya qilinadi.
+        const ext = ALLOWED_AVATAR_EXT.includes(rawExt)
+          ? rawExt
+          : (mime === 'image/png' ? 'png'
+            : mime === 'image/webp' ? 'webp'
+            : mime === 'image/gif' ? 'gif'
+            : 'jpg')
+        if (!ALLOWED_AVATAR_MIME.includes(mime)) {
+          throw new Error(t('avatarTypeInvalid') || 'Yaroqsiz rasm formati')
+        }
         const path = `avatars/${user.id}.${ext}`
         const { error: uploadError } = await supabase.storage
-          .from('avatars').upload(path, avatarFile, { upsert: true })
+          .from('avatars')
+          .upload(path, avatarFile, { upsert: true, contentType: mime })
         if (uploadError) throw uploadError
         const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path)
         avatar_url = urlData.publicUrl

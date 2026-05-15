@@ -205,19 +205,30 @@ export default function Addresses() {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: async (id) => { await supabase.from('addresses').delete().eq('id', id) },
+    mutationFn: async (id) => {
+      // RLS himoya qiladi, lekin chuqur himoya prinsipi: explicit user_id filtri
+      const { error } = await supabase
+        .from('addresses')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id)
+      if (error) throw error
+    },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['addresses', user?.id] }); toast.success(t('removed')) },
+    onError: () => toast.error(t('error')),
   })
 
   const defaultMutation = useMutation({
+    // Atomik: ikkita alohida UPDATE o'rniga bitta server RPC (race condition siz)
     mutationFn: async (id) => {
-      await supabase.from('addresses').update({ is_default: false }).eq('user_id', user.id)
-      await supabase.from('addresses').update({ is_default: true }).eq('id', id)
+      const { error } = await supabase.rpc('set_default_address', { p_id: id })
+      if (error) throw error
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['addresses', user?.id] })
       toast.success(t('primarySet'))
     },
+    onError: () => toast.error(t('error')),
   })
 
   return (

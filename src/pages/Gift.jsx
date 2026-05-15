@@ -15,10 +15,32 @@ import toast from 'react-hot-toast'
 import { buildClickPayUrl, isClickConfigured } from '@/lib/clickPay'
 
 // ── Sovg'a yaratish modali ─────────────────────────────────────────
+// Eslatma: Payme hozircha haqiqiy integratsiya emas. To'lov simulyatsiyasini
+// foydalanuvchiga ko'rsatish noto'g'ri — Payme bo'limi vaqtincha o'chirilgan.
+// (Tugagandan keyin shu yerga { id: 'payme', ... } qaytariladi.)
 const GIFT_PAYMENT_METHODS = [
-  { id: 'payme', labelKey: 'payme', icon: 'P', color: 'bg-blue-600' },
   { id: 'click', labelKey: 'click', icon: 'C', color: 'bg-orange-500' },
 ]
+
+// Kuchli token: SubtleCrypto random bytes → hex. UUID fallback emas, balki
+// crypto.getRandomValues() ishlatadi. Faqat juda eski (HTTPS bo'lmagan) brauzerlarda
+// fallback bo'ladi va u ham faqat ogohlantirish bilan.
+function generateGiftToken() {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16)
+      crypto.getRandomValues(bytes)
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+    }
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID().replace(/-/g, '')
+    }
+  } catch {}
+  // Eski brauzerlar uchun fallback — bu yo'l qaytib qoluvchi.
+  // Date.now() + Math.random() taxmin qilinishi mumkin, shu uchun bir nechta
+  // manbalarni aralashtirish ham foyda bermaydi. Tavsiya: zamonaviy brauzer talab qilish.
+  throw new Error('Secure random not available — brauzeringizni yangilang')
+}
 
 function CreateGiftModal({ product, onClose, onCreated }) {
   const { user } = useAuth()
@@ -26,22 +48,35 @@ function CreateGiftModal({ product, onClose, onCreated }) {
   const [step, setStep] = useState('details') // 'details' | 'payment' | 'processing'
   const [quantity, setQuantity] = useState(1)
   const [message, setMessage]   = useState('')
-  const [paymentMethod, setPaymentMethod] = useState('payme')
+  const [paymentMethod, setPaymentMethod] = useState('click')
   const [loading, setLoading]   = useState(false)
 
   const total = (product?.price || 0) * quantity
 
   const handlePayAndCreate = async () => {
+    // Faqat haqiqiy ulangan to'lov usullari qabul qilinadi.
+    // Payme hozircha integratsiya qilinmagan — soxta "muvaffaqiyat" ko'rsatmaymiz.
+    if (paymentMethod !== 'click') {
+      toast.error(t('paymeUnavailable'))
+      return
+    }
+    if (!isClickConfigured()) {
+      toast.error(t('clickNotConfigured'))
+      return
+    }
+
     setLoading(true)
     setStep('processing')
     try {
-      if (paymentMethod === 'click' && !isClickConfigured()) {
-        toast.error(t('clickNotConfigured'))
+      let token
+      try {
+        token = generateGiftToken()
+      } catch (e) {
+        toast.error(e?.message || t('error'))
         setStep('payment')
         return
       }
 
-      const token = crypto.randomUUID?.()?.replace(/-/g, '') || `${Date.now()}${Math.random().toString(36).slice(2, 12)}`
       const { data, error } = await supabase
         .from('gifts')
         .insert({
@@ -52,29 +87,20 @@ function CreateGiftModal({ product, onClose, onCreated }) {
           price:         product.price,
           quantity,
           message:       message.trim() || null,
-          status:        paymentMethod === 'click' ? 'awaiting_payment' : 'pending',
+          status:        'awaiting_payment',
           token,
         })
         .select()
         .single()
       if (error) throw error
 
-      if (paymentMethod === 'click') {
-        const returnUrl = `${window.location.origin}/payment/click-return?gift_id=${encodeURIComponent(data.id)}`
-        const payUrl = buildClickPayUrl({
-          amountSoum: total,
-          merchantTransId: `gift:${data.id}`,
-          returnUrl,
-        })
-        window.location.assign(payUrl)
-        return
-      }
-
-      // Payme hali ulanmagan, shuning uchun u eski demo oqimida qoladi.
-      await new Promise(r => setTimeout(r, 1500))
-      toast.success(t('giftPaymentSuccess'))
-      toast.success(t('giftLinkCreated'))
-      onCreated(data)
+      const returnUrl = `${window.location.origin}/payment/click-return?gift_id=${encodeURIComponent(data.id)}`
+      const payUrl = buildClickPayUrl({
+        amountSoum: total,
+        merchantTransId: `gift:${data.id}`,
+        returnUrl,
+      })
+      window.location.assign(payUrl)
     } catch (err) {
       console.error(err)
       toast.error(t('error'))
@@ -126,7 +152,7 @@ function CreateGiftModal({ product, onClose, onCreated }) {
               </div>
             </div>
             <p className="text-xs font-semibold text-muted-foreground">{t('selectPaymentMethod')}</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className={`grid gap-2 ${GIFT_PAYMENT_METHODS.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
               {GIFT_PAYMENT_METHODS.map(m => (
                 <button key={m.id} type="button" onClick={() => setPaymentMethod(m.id)}
                   className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-all ${

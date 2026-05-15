@@ -42,6 +42,7 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
   const [loading, setLoading] = useState(false)
   const [couponCode, setCouponCode] = useState('')
   const [appliedCoupon, setAppliedCoupon] = useState(null)
+  const [couponLoading, setCouponLoading] = useState(false)
   const [payMode, setPayMode] = useState('cod')
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -76,30 +77,37 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
     }
   }, [defaultAddress])
 
-  let couponDiscount = 0
-  if (appliedCoupon) {
-    if (appliedCoupon.type === 'percent') {
-      couponDiscount = Math.round(subtotal * appliedCoupon.value / 100)
-    } else {
-      couponDiscount = Math.min(appliedCoupon.value, subtotal)
-    }
-  }
+  // Eslatma: Kupon va jami narx server tomonida (DB trigger / RPC) majburlanadi.
+  // Bu yerdagi qiymatlar faqat UI ko'rsatish (preview) uchun — yakuniy hisob serverdan keladi.
+  const couponDiscount = appliedCoupon?.discount ?? 0
   const total = Math.max(0, subtotal - couponDiscount + shippingCost)
 
-  const applyCoupon = () => {
+  const applyCoupon = async () => {
     const code = couponCode.trim().toUpperCase()
-    if (!code) return
-    const COUPONS = {
-      SAVE10: { type: 'percent', value: 10 },
-      SAVE20: { type: 'percent', value: 20 },
-      FREE20: { type: 'fixed', value: 20000 },
-      FREE50: { type: 'fixed', value: 50000 },
-    }
-    if (COUPONS[code]) {
-      setAppliedCoupon({ code, ...COUPONS[code] })
-      toast.success(t('saved'))
-    } else {
+    if (!code || couponLoading) return
+    setCouponLoading(true)
+    try {
+      const { data, error } = await supabase
+        .rpc('validate_coupon', { p_code: code, p_subtotal: subtotal })
+      if (error) throw error
+      const row = Array.isArray(data) ? data[0] : data
+      if (row?.valid) {
+        setAppliedCoupon({
+          code: row.code,
+          type: row.type,
+          value: Number(row.value || 0),
+          discount: Number(row.discount || 0),
+        })
+        toast.success(t('saved'))
+      } else {
+        setAppliedCoupon(null)
+        toast.error(t('couponInvalid'))
+      }
+    } catch {
+      setAppliedCoupon(null)
       toast.error(t('couponInvalid'))
+    } finally {
+      setCouponLoading(false)
     }
   }
 
@@ -234,16 +242,20 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
     setLoading(true)
     try {
       const orderStatus = payMode === 'click' ? 'awaiting_payment' : 'pending'
+      // MUHIM: `total`, `subtotal`, `shipping_cost`, `discount_total` va `items[].price`
+      // server tomonida BEFORE INSERT trigger (`aa_orders_recompute_total`) tomonidan qayta hisoblanadi.
+      // Klient yuborgan narxlar e'tiborga olinmaydi — DB dan o'qiladi.
       const { data: insertedRows, error } = await supabase.from('orders').insert({
         user_id: user.id,
         items: cartItems.map(i => ({
           product_id: i.product_id, product_name: i.product_name,
-          image: i.product_image, price: Number(i.price), quantity: Number(i.quantity),
+          image: i.product_image, quantity: Number(i.quantity),
         })),
-        total, status: orderStatus,
+        total: 0, status: orderStatus,
+        coupon_code: appliedCoupon?.code || null,
         full_name: form.full_name, phone: formatPhoneForSave(form.phone),
         address: buildOrderAddress(), note: buildOrderNote(),
-      }).select('id')
+      }).select('id, total')
       if (error) throw error
       const inserted = Array.isArray(insertedRows) ? insertedRows[0] : null
       if (!inserted?.id) {
@@ -257,9 +269,15 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
       }
 
       if (payMode === 'click') {
+        // Click uchun summa server qaytargan `total` dan olinadi (klient hisob-kitobi emas).
+        const serverTotal = Number(inserted.total)
+        if (!Number.isFinite(serverTotal) || serverTotal <= 0) {
+          toast.error(t('clickRequiresPositiveTotal'))
+          return
+        }
         const returnUrl = `${window.location.origin}/payment/click-return?order_id=${encodeURIComponent(inserted.id)}`
         const payUrl = buildClickPayUrl({
-          amountSoum: total,
+          amountSoum: serverTotal,
           merchantTransId: inserted.id,
           returnUrl,
         })
@@ -316,9 +334,9 @@ function OrderForm({ cartItems, subtotal, saleDiscount, shippingCost, productMap
             placeholder={t('coupon')}
             className="flex-1 px-3 py-2 rounded-lg bg-muted/50 border border-border text-sm outline-none focus:border-primary/50"
           />
-          <button onClick={applyCoupon}
-            className="px-3 py-2 rounded-lg bg-muted text-sm font-semibold flex items-center gap-1.5 flex-shrink-0">
-            <Tag className="w-4 h-4" /> {t('applyCoupon')}
+          <button onClick={applyCoupon} disabled={couponLoading || !couponCode.trim()}
+            className="px-3 py-2 rounded-lg bg-muted text-sm font-semibold flex items-center gap-1.5 flex-shrink-0 disabled:opacity-60">
+            <Tag className="w-4 h-4" /> {couponLoading ? '…' : t('applyCoupon')}
           </button>
         </div>
         {appliedCoupon && (
@@ -485,8 +503,18 @@ export default function Cart() {
   })
 
   const clearCart = async () => {
-    await supabase.from('cart_items').delete().eq('user_id', user.id)
-    queryClient.invalidateQueries({ queryKey: cartItemsQueryKey(user?.id) })
+    try {
+      const { error } = await supabase
+        .from('cart_items')
+        .delete()
+        .eq('user_id', user.id)
+      if (error) throw error
+    } catch (err) {
+      console.error('clearCart:', err)
+      toast.error(t('error'))
+    } finally {
+      queryClient.invalidateQueries({ queryKey: cartItemsQueryKey(user?.id) })
+    }
   }
 
   // Load selection from localStorage when returning to cart (only once per mount)

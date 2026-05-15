@@ -23,8 +23,15 @@ export function getSupabaseEnvIssue() {
   return null
 }
 
-/** @supabase/supabase-js odatda "anon public" JWT (eyJ...) bilan ishlaydi */
+/**
+ * Supabase API kalit formatlari:
+ *   - Eski (JWT): "eyJ..." bilan boshlanadi
+ *   - Yangi (2024+): "sb_publishable_..." (anon) yoki "sb_secret_..." (service role)
+ * Ikkalasi ham qabul qilinadi.
+ */
 export function isLikelySupabaseJwtAnonKey(key) {
   const k = String(key || '').trim()
-  return k.startsWith('eyJ') && k.length > 80
+  if (k.startsWith('eyJ') && k.length > 80) return true
+  if (k.startsWith('sb_publishable_') && k.length > 25) return true
+  return false
 }
